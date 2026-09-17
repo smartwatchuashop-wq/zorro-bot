@@ -20,31 +20,34 @@ app.add_middleware(
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-XML_URL = "https://best-time.biz/prom-import.xml"
+XML_URL = "https://support.best-time.biz/api/feed/drops/ua"
 
 def get_products_context():
     try:
-        # Додаємо User-Agent, щоб Best-Time не блокував запит від Render
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(XML_URL, headers=headers, timeout=15)
+        response = requests.get(XML_URL, headers=headers, timeout=20)
         
-        # Парсимо XML
+        # Парсимо XML фід
         root = ET.fromstring(response.content)
         products = []
         
-        for offer in root.findall(".//offer"):
-            name = offer.findtext("name", "")
-            price = offer.findtext("price", "")
-            description = offer.findtext("description", "")
+        # Переглядаємо всі товари (теги offer або item)
+        offers = root.findall(".//offer") or root.findall(".//item")
+        
+        for offer in offers:
+            name = offer.findtext("name") or offer.findtext("title") or ""
+            price = offer.findtext("price") or ""
+            description = offer.findtext("description") or ""
+            vendor = offer.findtext("vendor") or ""
             
-            # Очищаємо опис від HTML-тегів, якщо вони є
+            # Очищаємо текст від HTML-тегів
             if description:
-                description = description.replace("<p>", "").replace("</p>", "").replace("<br>", " ")[:150]
+                description = description.replace("<p>", "").replace("</p>", "").replace("<br>", " ").replace("<br/>", " ")[:150]
             
             if name and price:
-                products.append(f"Товар: {name} | Ціна: {price} грн | Опис: {description}")
+                products.append(f"Товар: {name} (Бренд: {vendor}) | Ціна: {price} грн | Опис: {description}")
             
-            if len(products) >= 80:  # Беремо до 80 товарів для аналізу
+            if len(products) >= 100:  # Беремо 100 актуальних товарів
                 break
                 
         if not products:
@@ -69,14 +72,14 @@ async def chat(data: ChatRequest):
     catalog = get_products_context()
     
     system_prompt = f"""
-    Ти — професійний продавця-консультант інтернет-магазину годинників ZORRO.
+    Ти — професійний продавець-консультант інтернет-магазину годинників ZORRO.
     Твоє завдання — допомагати покупцям підбирати годинники з наявного асортименту.
     Відповідай ввічливо, коротко, українською мовою.
     
-    Ось актуальний каталог товарів магазину:
+    Ось актуальний каталог товарів магазину з Best-Time:
     {catalog}
     
-    Рекомендуй лише ті товари, які є в каталозі. Якщо запитують про функції (наприклад, ліхтарик, водонепроникність), шукай їх в описі товарів.
+    Рекомендуй лише ті товари, які є в каталозі. Якщо запитують про функції (наприклад, водонепроникність, Bluetooth, ліхтарик), шукай їх в описі товарів.
     """
     
     try:
@@ -86,10 +89,8 @@ async def chat(data: ChatRequest):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": data.message}
             ],
-            max_tokens=300
+            max_tokens=350
         )
         return {"reply": response.choices[0].message.content}
     except Exception as e:
-        return {"reply": f"Помилка сервера: {str(e)}"}        
-    
-    
+        return {"reply": f"Помилка сервера: {str(e)}"}
