@@ -3,11 +3,11 @@ import re
 import time
 import xml.etree.ElementTree as ET
 import requests
+import google.generativeai as genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from openai import OpenAI
 
 app = FastAPI()
 
@@ -19,112 +19,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 XML_URL = "https://support.best-time.biz/api/feed/drops/ua"
 
-CACHED_PRODUCTS = []
+CACHED_CATALOG_TEXT = ""
 LAST_FETCH_TIME = 0
 CACHE_TTL = 7200  # 2 години
 
-SYNONYMS_MAP = {
-    "ліхтарик": ["ліхтарик", "ліхтар", "фонарик", "фонарь", "torch", "flashlight", "led-підсвічування", "світлодіод"],
-    "сим": ["sim", "сим", "4g", "3g", "gsm", "слот для карт", "вставити сим"],
-    "камера": ["камер", "camera", "photo", "відео", "фото"],
-    "тиск": ["тиск", "тонометр", "pressure"],
-    "водонепроникний": ["ip67", "ip68", "waterproof", "водозахист", "3atm", "5atm", "водостійк"],
-    "дитячий": ["дитяч", "kids", "baby", "дитин"],
-}
-
-def fetch_products_from_xml():
+def load_and_format_xml_catalog():
+    """Завантажує весь XML-каталог та готує його для Gemini"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(XML_URL, headers=headers, timeout=30)
         response.encoding = 'utf-8'
         
         if response.status_code != 200:
-            return []
+            return ""
 
         root = ET.fromstring(response.content)
         items = root.findall(".//product") or root.findall(".//offer") or root.findall(".//item")
         
-        parsed_products = []
+        catalog_lines = []
         for item in items:
             name = item.findtext("name") or item.findtext("title") or ""
             price = item.findtext("price") or ""
             description = item.findtext("description") or ""
             vendor = item.findtext("vendor") or item.findtext("brand") or ""
-            category = item.findtext("category") or item.findtext("categoryId") or ""
             
             if description:
                 description = re.sub(r'<[^>]+>', ' ', description)
                 description = " ".join(description.split())
             
             if name and price:
-                full_search_text = f"{name} {vendor} {category} {description}".lower()
-                parsed_products.append({
-                    "name": name,
-                    "price": price,
-                    "vendor": vendor,
-                    "description": description,
-                    "full_text": full_search_text
-                })
+                catalog_lines.append(
+                    f"Товар: {name} | Ціна: {price} грн | Бренд: {vendor}\n"
+                    f"Опис: {description}\n"
+                    f"------------------------------------"
+                )
                 
-        return parsed_products
+        return "\n".join(catalog_lines)
     except Exception:
-        return []
+        return ""
 
-def get_all_products():
-    global CACHED_PRODUCTS, LAST_FETCH_TIME
+def get_full_catalog():
+    global CACHED_CATALOG_TEXT, LAST_FETCH_TIME
     current_time = time.time()
     
-    if not CACHED_PRODUCTS or (current_time - LAST_FETCH_TIME) > CACHE_TTL:
-        new_products = fetch_products_from_xml()
-        if new_products:
-            CACHED_PRODUCTS = new_products
+    if not CACHED_CATALOG_TEXT or (current_time - LAST_FETCH_TIME) > CACHE_TTL:
+        new_catalog = load_and_format_xml_catalog()
+        if new_catalog:
+            CACHED_CATALOG_TEXT = new_catalog
             LAST_FETCH_TIME = current_time
             
-    return CACHED_PRODUCTS
-
-def search_relevant_products(query: str, all_products: list, limit: int = 35):
-    query_clean = query.lower()
-    
-    # Визначаємо, які саме категорії/функції шукає користувач
-    requested_groups = []
-    for group_name, syn_list in SYNONYMS_MAP.items():
-        if any(syn in query_clean for syn in syn_list) or group_name in query_clean:
-            requested_groups.append(syn_list)
-
-    matched_products = []
-    
-    for prod in all_products:
-        text = prod["full_text"]
-        score = 0
-        
-        # Перевірка на відповідність кожній із запитуваних груп (наприклад, І sim, І ліхтарик)
-        if requested_groups:
-            matches_all_groups = True
-            for syn_list in requested_groups:
-                if any(syn in text for syn in syn_list):
-                    score += 1
-                else:
-                    matches_all_groups = False
-            
-            # Надаємо максимальний пріоритет товарам, що містять УСІ запитувані функції одразу
-            if matches_all_groups:
-                score += 100
-
-        if score > 0:
-            matched_products.append((score, prod))
-            
-    matched_products.sort(key=lambda x: x[0], reverse=True)
-    results = [p[1] for p in matched_products[:limit]]
-    
-    if not results:
-        results = all_products[:limit]
-        
-    return results
+    return CACHED_CATALOG_TEXT
 
 class MessageItem(BaseModel):
     role: str
@@ -136,57 +86,48 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "ok", "cached_products": len(CACHED_PRODUCTS)}
+    return {"status": "ok", "catalog_loaded": len(CACHED_CATALOG_TEXT) > 0}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
-    if not client:
-        return {"reply": "API-ключ OpenAI не налаштовано."}
+    if not GEMINI_API_KEY:
+        return {"reply": "API-ключ GEMINI_API_KEY не налаштовано на сервері."}
     
-    all_products = get_all_products()
-    if not all_products:
+    full_catalog = get_full_catalog()
+    if not full_catalog:
         return {"reply": "Вибачте, каталог товарів тимчасово недоступний."}
+
+    system_instruction = f"""
+    Ти — досвідчений, привітний та чесний менеджер-консультант інтернет-магазину годинників ZORRO.
     
-    relevant_products = search_relevant_products(data.message, all_products)
+    ОСЬ ПОВНИЙ КАТАЛОГ УСІХ НАШИХ ТОВАРІВ:
+    {full_catalog}
     
-    catalog_context = []
-    for p in relevant_products:
-        catalog_context.append(
-            f"Модель: {p['name']} | Ціна: {p['price']} грн | Бренд: {p['vendor']}\n"
-            f"Офіційний опис з бази: {p['description']}\n"
-            "---"
-        )
-    
-    context_str = "\n".join(catalog_context)
-    
-    system_prompt = f"""
-    Ти — суворий і чесний консультант інтернет-магазину годинників ZORRO.
-    
-    Ось відібрані товари з нашої бази даних:
-    {context_str}
-    
-    СУВОРІ ПРАВИЛА:
-    1. Відповідай ТІЛЬКИ на основі наведеного "Офіційного опису з бази".
-    2. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати або додумувати характеристики!
-    3. Якщо в описі товару НЕМАЄ прямої згадки про ліхтарик (або його синоніми: фонарик, flashlight, LED) чи SIM-карту — стверджувати, що ця функція є, ЗАБОРОНЕНО.
-    4. Якщо покупець шукає поєднання двох функцій (наприклад, SIM + ліхтарик), і в базі немає жодної моделі з двома цими функціями ОДНОЧАСНО — чесно скажи: "На жаль, моделей, де є і SIM-карта, і ліхтарик одночасно, зараз немає в наявності. Але є окремо з SIM-картою або окремо з ліхтариком."
-    5. Відповідай коротко, ввічливо, українською мовою.
+    ПРАВИЛА РОБОТИ:
+    1. Відповідай ТІЛЬКИ на основі даних із наданого каталогу товарів.
+    2. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати характеристики, яких немає в описі товару!
+    3. Якщо покупець шукає поєднання двох або більше функцій (наприклад, SIM-карта + ліхтарик чи Wi-Fi + ліхтарик), уважно перевір увесь каталог. Якщо жодної такої моделі немає з обома функціями одночасно — чесно та природно дай відповідь (наприклад: "На жаль, моделей, де є і SIM-карта, і ліхтарик одночасно, зараз немає в наявності. Але у нас є чудові варіанти окремо з SIM-картою або окремо з ліхтариком").
+    4. Уважно стеж за контекстом розмови (на запитання "а бувають такі?", "ціна?", "а для хлопчика?" відповідай з урахуванням попередніх реплік клієнта).
+    5. Пропонуючи конкретний товар, називай його повну назву, ціну та коротко виділяй потрібну характеристику.
+    6. Спілкуйся українською мовою, легко, коротко та без шаблонних вигадок.
     """
-    
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    if data.history:
-        for msg in data.history[-6:]:
-            messages.append({"role": msg.role, "content": msg.content})
-            
-    messages.append({"role": "user", "content": data.message})
-    
+
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=500
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=system_instruction
         )
-        return {"reply": response.choices[0].message.content}
+        
+        chat_session = model.start_chat(history=[])
+        
+        # Передаємо історію листування
+        if data.history:
+            for msg in data.history[-6:]:
+                role = "user" if msg.role == "user" else "model"
+                chat_session.history.append({"role": role, "parts": [msg.content]})
+        
+        response = chat_session.send_message(data.message)
+        return {"reply": response.text}
+        
     except Exception as e:
-        return {"reply": f"Помилка сервера: {str(e)}"}
+        return {"reply": f"Помилка Gemini API: {str(e)}"}
