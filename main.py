@@ -26,12 +26,11 @@ XML_URL = "https://support.best-time.biz/api/feed/drops/ua"
 
 CACHED_PRODUCTS = []
 LAST_FETCH_TIME = 0
-CACHE_TTL = 7200  # 2 години в секундах
+CACHE_TTL = 7200  # 2 години
 
-# Словник розширених синонімів для точного пошуку характеристик
 SYNONYMS_MAP = {
-    "ліхтарик": ["ліхтарик", "ліхтар", "фонарик", "фонарь", "torch", "flashlight", "led-підсвічування", "led підсвічування", "світлодіод"],
-    "сим": ["sim", "сим", "4g", "3g", "gsm", "слот", "дзвінк"],
+    "ліхтарик": ["ліхтарик", "ліхтар", "фонарик", "фонарь", "torch", "flashlight", "led-підсвічування", "світлодіод"],
+    "сим": ["sim", "сим", "4g", "3g", "gsm", "слот для карт", "вставити сим"],
     "камера": ["камер", "camera", "photo", "відео", "фото"],
     "тиск": ["тиск", "тонометр", "pressure"],
     "водонепроникний": ["ip67", "ip68", "waterproof", "водозахист", "3atm", "5atm", "водостійк"],
@@ -39,7 +38,6 @@ SYNONYMS_MAP = {
 }
 
 def fetch_products_from_xml():
-    """Завантажує та парсить УСІ товари з XML-прайсу Best-Time"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(XML_URL, headers=headers, timeout=30)
@@ -78,7 +76,6 @@ def fetch_products_from_xml():
         return []
 
 def get_all_products():
-    """Отримує товари з кешу або оновлює кеш кожні 2 години"""
     global CACHED_PRODUCTS, LAST_FETCH_TIME
     current_time = time.time()
     
@@ -90,26 +87,34 @@ def get_all_products():
             
     return CACHED_PRODUCTS
 
-def search_relevant_products(query: str, all_products: list, limit: int = 50):
-    """Гнучкий пошук товарів за запитом користувача з урахуванням синонімів"""
+def search_relevant_products(query: str, all_products: list, limit: int = 35):
     query_clean = query.lower()
     
-    # Збираємо всі ключові слова для пошуку, включаючи синоніми
-    search_terms = set(re.findall(r'\w+', query_clean))
-    
-    for key, syn_list in SYNONYMS_MAP.items():
-        if any(syn in query_clean for syn in syn_list) or key in query_clean:
-            search_terms.update(syn_list)
+    # Визначаємо, які саме категорії/функції шукає користувач
+    requested_groups = []
+    for group_name, syn_list in SYNONYMS_MAP.items():
+        if any(syn in query_clean for syn in syn_list) or group_name in query_clean:
+            requested_groups.append(syn_list)
 
     matched_products = []
+    
     for prod in all_products:
-        score = 0
         text = prod["full_text"]
+        score = 0
         
-        for term in search_terms:
-            if len(term) > 2 and term in text:
-                score += 1
-                
+        # Перевірка на відповідність кожній із запитуваних груп (наприклад, І sim, І ліхтарик)
+        if requested_groups:
+            matches_all_groups = True
+            for syn_list in requested_groups:
+                if any(syn in text for syn in syn_list):
+                    score += 1
+                else:
+                    matches_all_groups = False
+            
+            # Надаємо максимальний пріоритет товарам, що містять УСІ запитувані функції одразу
+            if matches_all_groups:
+                score += 100
+
         if score > 0:
             matched_products.append((score, prod))
             
@@ -148,31 +153,30 @@ async def chat(data: ChatRequest):
     for p in relevant_products:
         catalog_context.append(
             f"Модель: {p['name']} | Ціна: {p['price']} грн | Бренд: {p['vendor']}\n"
-            f"Опис та характеристики: {p['description']}\n"
+            f"Офіційний опис з бази: {p['description']}\n"
             "---"
         )
     
     context_str = "\n".join(catalog_context)
     
     system_prompt = f"""
-    Ти — професійний продавець-консультант інтернет-магазину годинників ZORRO.
+    Ти — суворий і чесний консультант інтернет-магазину годинників ZORRO.
     
-    Ось відібраний список товарів з прайсу під запит клієнта:
+    Ось відібрані товари з нашої бази даних:
     {context_str}
     
-    ПРАВИЛА ВІДПОВІДІ:
-    1. Якщо у списках є товари з запитуваною функцією (наприклад, ліхтарик, SIM-карта, водозахист тощо), ПЕРЕРАХУЙ УСІ ЗНАЙДЕНІ МОДЕЛІ з цього списку та їх ціни.
-    2. Уважно перевіряй опис товару на наявність синонімів цієї функції (наприклад, "ліхтарик", "фонарик", "LED", "підсвічування", "torch").
-    3. Не обмежуйся 2-3 моделями, якщо у списку їх більше.
-    4. Пам'ятай попередній контекст розмови.
-    5. Відповідай ввічливо, структуровано та українською мовою.
+    СУВОРІ ПРАВИЛА:
+    1. Відповідай ТІЛЬКИ на основі наведеного "Офіційного опису з бази".
+    2. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати або додумувати характеристики!
+    3. Якщо в описі товару НЕМАЄ прямої згадки про ліхтарик (або його синоніми: фонарик, flashlight, LED) чи SIM-карту — стверджувати, що ця функція є, ЗАБОРОНЕНО.
+    4. Якщо покупець шукає поєднання двох функцій (наприклад, SIM + ліхтарик), і в базі немає жодної моделі з двома цими функціями ОДНОЧАСНО — чесно скажи: "На жаль, моделей, де є і SIM-карта, і ліхтарик одночасно, зараз немає в наявності. Але є окремо з SIM-картою або окремо з ліхтариком."
+    5. Відповідай коротко, ввічливо, українською мовою.
     """
     
-    # Формування історії діалогу для пам'яті
     messages = [{"role": "system", "content": system_prompt}]
     
     if data.history:
-        for msg in data.history[-6:]:  # Зберігаємо останні 6 реплік для контексту
+        for msg in data.history[-6:]:
             messages.append({"role": msg.role, "content": msg.content})
             
     messages.append({"role": "user", "content": data.message})
@@ -181,7 +185,7 @@ async def chat(data: ChatRequest):
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=600
+            max_tokens=500
         )
         return {"reply": response.choices[0].message.content}
     except Exception as e:
