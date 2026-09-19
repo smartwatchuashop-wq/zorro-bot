@@ -28,6 +28,15 @@ CACHED_CATALOG_TEXT = ""
 LAST_FETCH_TIME = 0
 CACHE_TTL = 7200  # 2 години
 
+# Список усіх можливих назв моделей для авто-перевірки
+CANDIDATE_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-3.6-flash",
+    "gemini-pro"
+]
+
 def send_telegram_notification(phone: str, message: str = ""):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
@@ -94,6 +103,45 @@ def get_full_catalog():
             
     return CACHED_CATALOG_TEXT
 
+def call_gemini_api(prompt_text: str, history_list: list = [], system_instruction: str = ""):
+    """Функція автоматичного перебору моделей Google API"""
+    if not GEMINI_API_KEY:
+        return "API-ключ GEMINI_API_KEY не налаштовано."
+
+    contents = []
+    if history_list:
+        for msg in history_list[-6:]:
+            role = "user" if msg.get("role") == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": msg.get("content", "")}]})
+            
+    contents.append({"role": "user", "parts": [{"text": prompt_text}]})
+
+    payload = {
+        "contents": contents,
+        "generationConfig": {"temperature": 0.3}
+    }
+    if system_instruction:
+        payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+
+    errors_log = []
+
+    # Автоматично випробовуємо варіанти версій API та моделей
+    for api_ver in ["v1beta", "v1"]:
+        for model in CANDIDATE_MODELS:
+            url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            try:
+                res = requests.post(url, json=payload, timeout=12)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    return res_json['candidates'][0]['content']['parts'][0]['text']
+                else:
+                    err_data = res.json().get('error', {})
+                    errors_log.append(f"[{api_ver}/{model}]: {err_data.get('message', 'error')}")
+            except Exception as e:
+                errors_log.append(f"[{api_ver}/{model}]: {str(e)}")
+
+    return f"Усі моделі повернули помилку: {'; '.join(errors_log[:2])}"
+
 class MessageItem(BaseModel):
     role: str
     content: str
@@ -110,6 +158,12 @@ class CallbackRequest(BaseModel):
 def root():
     return {"status": "ok", "catalog_loaded": len(CACHED_CATALOG_TEXT) > 0}
 
+@app.get("/api/test")
+def test_api():
+    """Ендпоїнт автоматичної перевірки з'єднання з Google Gemini"""
+    reply = call_gemini_api("Привіт, ти працюєш?", system_instruction="Ти тестовий бот.")
+    return {"working": "Помилка" not in reply, "response": reply}
+
 @app.post("/api/callback")
 async def callback(data: CallbackRequest):
     if not data.phone:
@@ -119,13 +173,10 @@ async def callback(data: CallbackRequest):
     if success:
         return {"status": "success", "reply": "Дякуємо! Менеджер зателефонує вам найближчим часом."}
     else:
-        return {"status": "error", "reply": "Помилка відправки. Перевірте налаштування Telegram."}
+        return {"status": "error", "reply": "Помилка відправки в Telegram."}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
-    if not GEMINI_API_KEY:
-        return {"reply": "API-ключ GEMINI_API_KEY не налаштовано."}
-    
     full_catalog = get_full_catalog()
     if not full_catalog:
         return {"reply": "Вибачте, каталог товарів тимчасово недоступний."}
@@ -139,42 +190,13 @@ async def chat(data: ChatRequest):
     ПРАВИЛА РОБОТИ:
     1. Відповідай ТІЛЬКИ на основі даних із наданого каталогу товарів.
     2. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати характеристики, яких немає в описі товару!
-    3. Якщо покупець шукає поєднання кількох функцій, яких немає разом в одній моделі — чесно скажи про це і запропонуй варіанти окремо.
+    3. Якщо покупець шукає поєднання кількох функцій, яких немає разом в одній моделі — чесно скажи про це.
     4. Уважно стеж за контекстом розмови.
     5. Пропонуючи товар, називай назву, ціну та ключову фішку.
     6. Якщо клієнт вагається — пропонуй залишити номер телефону для швидкої консультації менеджера.
     7. Спілкуйся українською мовою, коротко та дружньо.
     """
 
-    # Використовуємо актуальну модель gemini-3.6-flash
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
-    if data.history:
-        for msg in data.history[-6:]:
-            role = "user" if msg.role == "user" else "model"
-            contents.append({"role": role, "parts": [{"text": msg.content}]})
-            
-    contents.append({"role": "user", "parts": [{"text": data.message}]})
-
-    payload = {
-        "contents": contents,
-        "systemInstruction": {
-            "parts": [{"text": system_instruction}]
-        },
-        "generationConfig": {
-            "temperature": 0.3
-        }
-    }
-
-    try:
-        res = requests.post(url, json=payload, timeout=25)
-        res_json = res.json()
-        
-        if res.status_code == 200:
-            reply_text = res_json['candidates'][0]['content']['parts'][0]['text']
-            return {"reply": reply_text}
-        else:
-            err_msg = res_json.get('error', {}).get('message', 'Невідома помилка')
-            return {"reply": f"Помилка Google API: {err_msg}"}
-            
-    except Exception as e:
-        return {"reply": f"Помилка з'єднання: {str(e)}"}
+    history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
+    reply = call_gemini_api(data.message, history_formatted, system_instruction)
+    return {"reply": reply}
