@@ -20,6 +20,9 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
@@ -29,8 +32,28 @@ CACHED_CATALOG_TEXT = ""
 LAST_FETCH_TIME = 0
 CACHE_TTL = 7200  # 2 години
 
+def send_telegram_notification(phone: str, message: str = ""):
+    """Надсилає сповіщення про новий номер у Telegram"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    
+    text = f"📞 *НОВА ЗАЯВКА НА ДЗВІНОК!*\n\n*Телефон:* `{phone}`"
+    if message:
+        text += f"\n*Коментар клієнта:* {message}"
+        
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, json=payload, timeout=5)
+        return True
+    except Exception:
+        return False
+
 def load_and_format_xml_catalog():
-    """Завантажує весь XML-каталог та готує його для Gemini"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(XML_URL, headers=headers, timeout=30)
@@ -84,9 +107,25 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[MessageItem]] = []
 
+class CallbackRequest(BaseModel):
+    phone: str
+    message: Optional[str] = ""
+
 @app.get("/")
 def root():
     return {"status": "ok", "catalog_loaded": len(CACHED_CATALOG_TEXT) > 0}
+
+@app.post("/api/callback")
+async def callback(data: CallbackRequest):
+    """Ендпоїнт для прийому номерів телефонів від клієнтів"""
+    if not data.phone:
+        return {"status": "error", "message": "Номер телефону обов'язковий"}
+    
+    success = send_telegram_notification(data.phone, data.message)
+    if success:
+        return {"status": "success", "reply": "Дякуємо! Менеджер зателефонує вам найближчим часом."}
+    else:
+        return {"status": "error", "reply": "Не вдалося відправити заявку, спробуйте пізніше."}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
@@ -106,21 +145,21 @@ async def chat(data: ChatRequest):
     ПРАВИЛА РОБОТИ:
     1. Відповідай ТІЛЬКИ на основі даних із наданого каталогу товарів.
     2. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати характеристики, яких немає в описі товару!
-    3. Якщо покупець шукає поєднання двох або більше функцій (наприклад, SIM-карта + ліхтарик чи Wi-Fi + ліхтарик), уважно перевір увесь каталог. Якщо жодної такої моделі немає з обома функціями одночасно — чесно та природно дай відповідь (наприклад: "На жаль, моделей, де є і SIM-карта, і ліхтарик одночасно, зараз немає в наявності. Але у нас є чудові варіанти окремо з SIM-картою або окремо з ліхтариком").
-    4. Уважно стеж за контекстом розмови (на запитання "а бувають такі?", "ціна?", "а для хлопчика?" відповідай з урахуванням попередніх реплік клієнта).
+    3. Якщо покупець шукає поєднання двох або більше функцій (наприклад, SIM-карта + ліхтарик чи Wi-Fi + ліхтарик), уважно перевір увесь каталог. Якщо жодної такої моделі немає з обома функціями одночасно — чесно та природно дай відповідь.
+    4. Уважно стеж за контекстом розмови.
     5. Пропонуючи конкретний товар, називай його повну назву, ціну та коротко виділяй потрібну характеристику.
-    6. Спілкуйся українською мовою, легко, коротко та без шаблонних вигадок.
+    6. Якщо клієнт вагається або хоче оформити замовлення швидко — запропонуй залишити свій номер телефону у формі зворотного дзвінка для консультації з менеджером.
+    7. Спілкуйся українською мовою, легко та коротко.
     """
 
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-1.5-flash-latest",
             system_instruction=system_instruction
         )
         
         chat_session = model.start_chat(history=[])
         
-        # Передаємо історію листування
         if data.history:
             for msg in data.history[-6:]:
                 role = "user" if msg.role == "user" else "model"
