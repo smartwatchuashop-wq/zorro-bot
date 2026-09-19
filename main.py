@@ -146,9 +146,8 @@ async def chat(data: ChatRequest):
     7. Спілкуйся українською мовою, коротко та дружньо.
     """
 
-    # Використовуємо актуальну модель gemini-2.5-flash
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    contents = []
+    # Використовуємо актуальну модель gemini-3.6-flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
     if data.history:
         for msg in data.history[-6:]:
             role = "user" if msg.role == "user" else "model"
