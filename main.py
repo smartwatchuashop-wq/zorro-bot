@@ -28,13 +28,12 @@ CACHED_CATALOG_TEXT = ""
 LAST_FETCH_TIME = 0
 CACHE_TTL = 7200  # 2 години
 
-# Список усіх можливих назв моделей для авто-перевірки
+# Актуальний список моделей Google Gemini
 CANDIDATE_MODELS = [
     "gemini-2.5-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
     "gemini-3.6-flash",
-    "gemini-pro"
+    "gemini-2.5-pro",
+    "gemini-1.5-flash-8b"
 ]
 
 def send_telegram_notification(phone: str, message: str = ""):
@@ -125,10 +124,11 @@ def call_gemini_api(prompt_text: str, history_list: list = [], system_instructio
 
     errors_log = []
 
-    # Автоматично випробовуємо варіанти версій API та моделей
+    # Автоматично випробовуємо версії API та моделі
     for api_ver in ["v1beta", "v1"]:
         for model in CANDIDATE_MODELS:
-            url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            clean_model = model.replace("models/", "")
+            url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{clean_model}:generateContent?key={GEMINI_API_KEY}"
             try:
                 res = requests.post(url, json=payload, timeout=12)
                 if res.status_code == 200:
@@ -136,9 +136,9 @@ def call_gemini_api(prompt_text: str, history_list: list = [], system_instructio
                     return res_json['candidates'][0]['content']['parts'][0]['text']
                 else:
                     err_data = res.json().get('error', {})
-                    errors_log.append(f"[{api_ver}/{model}]: {err_data.get('message', 'error')}")
+                    errors_log.append(f"[{api_ver}/{clean_model}]: {err_data.get('message', 'error')}")
             except Exception as e:
-                errors_log.append(f"[{api_ver}/{model}]: {str(e)}")
+                errors_log.append(f"[{api_ver}/{clean_model}]: {str(e)}")
 
     return f"Усі моделі повернули помилку: {'; '.join(errors_log[:2])}"
 
