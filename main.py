@@ -117,20 +117,19 @@ def root():
 
 @app.post("/api/callback")
 async def callback(data: CallbackRequest):
-    """Ендпоїнт для прийому номерів телефонів від клієнтів"""
     if not data.phone:
-        return {"status": "error", "message": "Номер телефону обов'язковий"}
+        return {"status": "error", "reply": "Введіть номер телефону."}
     
     success = send_telegram_notification(data.phone, data.message)
     if success:
         return {"status": "success", "reply": "Дякуємо! Менеджер зателефонує вам найближчим часом."}
     else:
-        return {"status": "error", "reply": "Не вдалося відправити заявку, спробуйте пізніше."}
+        return {"status": "error", "reply": "Помилка відправки заявки. Спробуйте ще раз."}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
     if not GEMINI_API_KEY:
-        return {"reply": "API-ключ GEMINI_API_KEY не налаштовано на сервері."}
+        return {"reply": "API-ключ GEMINI_API_KEY не налаштовано."}
     
     full_catalog = get_full_catalog()
     if not full_catalog:
@@ -145,28 +144,37 @@ async def chat(data: ChatRequest):
     ПРАВИЛА РОБОТИ:
     1. Відповідай ТІЛЬКИ на основі даних із наданого каталогу товарів.
     2. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати характеристики, яких немає в описі товару!
-    3. Якщо покупець шукає поєднання двох або більше функцій (наприклад, SIM-карта + ліхтарик чи Wi-Fi + ліхтарик), уважно перевір увесь каталог. Якщо жодної такої моделі немає з обома функціями одночасно — чесно та природно дай відповідь.
-    4. Уважно стеж за контекстом розмови.
-    5. Пропонуючи конкретний товар, називай його повну назву, ціну та коротко виділяй потрібну характеристику.
-    6. Якщо клієнт вагається або хоче оформити замовлення швидко — запропонуй залишити свій номер телефону у формі зворотного дзвінка для консультації з менеджером.
-    7. Спілкуйся українською мовою, легко та коротко.
+    3. Якщо покупець шукає поєднання кількох функцій, яких немає разом в одній моделі — чесно скажи про це і запропонуй варіанти окремо.
+    4. Уважно стеж за контекстом розмови (на репліки "а бувають такі?", "яка ціна?" відповідай з урахуванням історії).
+    5. Пропонуючи товар, називай назву, ціну та ключову фішку.
+    6. Якщо клієнт вагається — пропонуй залишити номер телефону для швидкої консультації менеджера.
+    7. Спілкуйся українською мовою, коротко та дружньо.
     """
 
-    try:
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash-latest",
-            system_instruction=system_instruction
-        )
-        
-        chat_session = model.start_chat(history=[])
-        
-        if data.history:
-            for msg in data.history[-6:]:
-                role = "user" if msg.role == "user" else "model"
-                chat_session.history.append({"role": role, "parts": [msg.content]})
-        
-        response = chat_session.send_message(data.message)
-        return {"reply": response.text}
-        
-    except Exception as e:
-        return {"reply": f"Помилка Gemini API: {str(e)}"}
+    # Автоматичний перебір сумісних версій моделей Gemini
+    candidate_models = ["gemini-1.5-flash", "models/gemini-1.5-flash", "gemini-pro"]
+    
+    last_error = ""
+    for model_name in candidate_models:
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system_instruction
+            )
+            
+            chat_session = model.start_chat(history=[])
+            
+            if data.history:
+                for msg in data.history[-6:]:
+                    role = "user" if msg.role == "user" else "model"
+                    chat_session.history.append({"role": role, "parts": [msg.content]})
+            
+            response = chat_session.send_message(data.message)
+            return {"reply": response.text}
+            
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    return {"reply": f"Помилка Gemini API: {last_error}"}
+    
