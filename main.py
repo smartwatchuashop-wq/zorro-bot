@@ -146,9 +146,8 @@ async def chat(data: ChatRequest):
     7. Спілкуйся українською мовою, коротко та дружньо.
     """
 
-    # Прямий HTTP запит до REST API Google (версія v1)
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
+    # Використовуємо v1beta та назву gemini-1.5-flash-latest
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
     contents = []
     if data.history:
         for msg in data.history[-6:]:
