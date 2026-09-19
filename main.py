@@ -7,8 +7,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from google import genai
-from google.genai import types
 
 app = FastAPI()
 
@@ -23,9 +21,6 @@ app.add_middleware(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# Ініціалізація нового SDK Google GenAI
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 XML_URL = "https://support.best-time.biz/api/feed/drops/ua"
 
@@ -124,11 +119,11 @@ async def callback(data: CallbackRequest):
     if success:
         return {"status": "success", "reply": "Дякуємо! Менеджер зателефонує вам найближчим часом."}
     else:
-        return {"status": "error", "reply": "Помилка відправки. Перевірте налаштування Telegram бота."}
+        return {"status": "error", "reply": "Помилка відправки. Перевірте налаштування Telegram."}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
-    if not client:
+    if not GEMINI_API_KEY:
         return {"reply": "API-ключ GEMINI_API_KEY не налаштовано."}
     
     full_catalog = get_full_catalog()
@@ -145,31 +140,43 @@ async def chat(data: ChatRequest):
     1. Відповідай ТІЛЬКИ на основі даних із наданого каталогу товарів.
     2. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати характеристики, яких немає в описі товару!
     3. Якщо покупець шукає поєднання кількох функцій, яких немає разом в одній моделі — чесно скажи про це і запропонуй варіанти окремо.
-    4. Уважно стеж за контекстом розмови (на репліки "а бувають такі?", "яка ціна?" відповідай з урахуванням історії).
+    4. Уважно стеж за контекстом розмови.
     5. Пропонуючи товар, називай назву, ціну та ключову фішку.
     6. Якщо клієнт вагається — пропонуй залишити номер телефону для швидкої консультації менеджера.
     7. Спілкуйся українською мовою, коротко та дружньо.
     """
 
-    # Формуємо історію для нового SDK
+    # Прямий HTTP запит до REST API Google (версія v1)
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
     contents = []
     if data.history:
         for msg in data.history[-6:]:
             role = "user" if msg.role == "user" else "model"
-            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
+            contents.append({"role": role, "parts": [{"text": msg.content}]})
             
-    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=data.message)]))
+    contents.append({"role": "user", "parts": [{"text": data.message}]})
+
+    payload = {
+        "contents": contents,
+        "systemInstruction": {
+            "parts": [{"text": system_instruction}]
+        },
+        "generationConfig": {
+            "temperature": 0.3
+        }
+    }
 
     try:
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.3
-            )
-        )
-        return {"reply": response.text}
+        res = requests.post(url, json=payload, timeout=25)
+        res_json = res.json()
         
+        if res.status_code == 200:
+            reply_text = res_json['candidates'][0]['content']['parts'][0]['text']
+            return {"reply": reply_text}
+        else:
+            err_msg = res_json.get('error', {}).get('message', 'Невідома помилка')
+            return {"reply": f"Помилка Google API: {err_msg}"}
+            
     except Exception as e:
-        return {"reply": f"Помилка Gemini API: {str(e)}"}
+        return {"reply": f"Помилка з'єднання: {str(e)}"}
