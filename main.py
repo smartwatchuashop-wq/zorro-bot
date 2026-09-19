@@ -3,11 +3,12 @@ import re
 import time
 import xml.etree.ElementTree as ET
 import requests
-import google.generativeai as genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+from google import genai
+from google.genai import types
 
 app = FastAPI()
 
@@ -23,8 +24,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Ініціалізація нового SDK Google GenAI
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 XML_URL = "https://support.best-time.biz/api/feed/drops/ua"
 
@@ -33,13 +34,12 @@ LAST_FETCH_TIME = 0
 CACHE_TTL = 7200  # 2 години
 
 def send_telegram_notification(phone: str, message: str = ""):
-    """Надсилає сповіщення про новий номер у Telegram"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
     
     text = f"📞 *НОВА ЗАЯВКА НА ДЗВІНОК!*\n\n*Телефон:* `{phone}`"
     if message:
-        text += f"\n*Коментар клієнта:* {message}"
+        text += f"\n*Коментар:* {message}"
         
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -124,11 +124,11 @@ async def callback(data: CallbackRequest):
     if success:
         return {"status": "success", "reply": "Дякуємо! Менеджер зателефонує вам найближчим часом."}
     else:
-        return {"status": "error", "reply": "Помилка відправки заявки. Спробуйте ще раз."}
+        return {"status": "error", "reply": "Помилка відправки. Перевірте налаштування Telegram бота."}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
-    if not GEMINI_API_KEY:
+    if not client:
         return {"reply": "API-ключ GEMINI_API_KEY не налаштовано."}
     
     full_catalog = get_full_catalog()
@@ -151,30 +151,25 @@ async def chat(data: ChatRequest):
     7. Спілкуйся українською мовою, коротко та дружньо.
     """
 
-    # Автоматичний перебір сумісних версій моделей Gemini
-    candidate_models = ["gemini-1.5-flash", "models/gemini-1.5-flash", "gemini-pro"]
-    
-    last_error = ""
-    for model_name in candidate_models:
-        try:
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=system_instruction
-            )
+    # Формуємо історію для нового SDK
+    contents = []
+    if data.history:
+        for msg in data.history[-6:]:
+            role = "user" if msg.role == "user" else "model"
+            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
             
-            chat_session = model.start_chat(history=[])
-            
-            if data.history:
-                for msg in data.history[-6:]:
-                    role = "user" if msg.role == "user" else "model"
-                    chat_session.history.append({"role": role, "parts": [msg.content]})
-            
-            response = chat_session.send_message(data.message)
-            return {"reply": response.text}
-            
-        except Exception as e:
-            last_error = str(e)
-            continue
+    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=data.message)]))
 
-    return {"reply": f"Помилка Gemini API: {last_error}"}
-    
+    try:
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.3
+            )
+        )
+        return {"reply": response.text}
+        
+    except Exception as e:
+        return {"reply": f"Помилка Gemini API: {str(e)}"}
