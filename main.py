@@ -64,64 +64,6 @@ def init_db():
 
 init_db()
 
-def sync_xml_to_db():
-    conn = get_db_connection()
-    if not conn:
-        return 0
-
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(XML_URL, headers=headers, timeout=40)
-        if response.status_code != 200:
-            conn.close()
-            return 0
-
-        root = ET.fromstring(response.content)
-        items = root.findall(".//product") or root.findall(".//offer") or root.findall(".//item")
-
-        count = 0
-        with conn.cursor() as cur:
-            for item in items:
-                vendor_code = item.get("id") or item.findtext("vendorCode") or item.findtext("code") or ""
-                name = item.findtext("name") or item.findtext("title") or ""
-                price_str = item.findtext("price") or "0"
-                vendor = item.findtext("vendor") or item.findtext("brand") or ""
-                description = item.findtext("description") or ""
-                url = item.findtext("url") or ""
-                image = item.findtext("picture") or item.findtext("image") or ""
-
-                if description:
-                    description = re.sub(r'<[^>]+>', ' ', description)
-                    description = " ".join(description.split())
-
-                try:
-                    price = float(price_str.replace(" ", "").replace(",", "."))
-                except ValueError:
-                    price = 0.0
-
-                if name and vendor_code:
-                    cur.execute("""
-                        INSERT INTO products (vendor_code, name, price, vendor, description, url, image)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (vendor_code) DO UPDATE 
-                        SET name = EXCLUDED.name,
-                            price = EXCLUDED.price,
-                            vendor = EXCLUDED.vendor,
-                            description = EXCLUDED.description,
-                            url = EXCLUDED.url,
-                            image = EXCLUDED.image;
-                    """, (vendor_code, name, price, vendor, description, url, image))
-                    count += 1
-
-            conn.commit()
-        conn.close()
-        return count
-    except Exception as e:
-        print(f"Помилка імпорту XML: {e}")
-        if conn:
-            conn.close()
-        return 0
-
 def search_products_in_db(query: str, limit: int = 5):
     conn = get_db_connection()
     if not conn:
@@ -153,15 +95,16 @@ def search_products_in_db(query: str, limit: int = 5):
 def send_telegram_notification(phone: str, message: str = ""):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
-    text = f"📞 *НОВА ЗАЯВКА НА ДЗВІНОК!*\n\n*Телефон:* `{phone}`"
+    text = f"📞 <b>НОВА ЗАЯВКА НА ДЗВІНОК З ЧАТУ!</b>\n\n<b>Телефон:</b> <code>{phone}</code>"
     if message:
-        text += f"\n*Коментар:* {message}"
+        text += f"\n<b>Повідомлення клієнта:</b> {message}"
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
     try:
         requests.post(url, json=payload, timeout=5)
         return True
-    except Exception:
+    except Exception as e:
+        print(f"Помилка надсилання в Telegram: {e}")
         return False
 
 def call_gemini_api(prompt_text: str, history_list: list = [], system_instruction: str = ""):
@@ -199,7 +142,7 @@ def call_gemini_api(prompt_text: str, history_list: list = [], system_instructio
             except Exception as e:
                 errors_log.append(f"[{api_ver}/{clean_model}]: {str(e)}")
 
-    return f"Усі моделі повернули помилку: {'; '.join(errors_log[:2])}"
+    return f"Помилка Gemini: {'; '.join(errors_log[:1])}"
 
 class MessageItem(BaseModel):
     role: str
@@ -217,19 +160,16 @@ class CallbackRequest(BaseModel):
 def root():
     return {"status": "ok", "database_connected": DATABASE_URL is not None}
 
-@app.get("/api/sync")
-def trigger_sync():
-    """Ендпоїнт для завантаження товарів із XML у базу PostgreSQL"""
-    count = sync_xml_to_db()
-    return {"status": "success", "imported_products": count}
-
 @app.post("/api/callback")
 async def callback(data: CallbackRequest):
     if not data.phone:
         return {"status": "error", "reply": "Введіть номер телефону."}
-    if send_telegram_notification(data.phone, data.message):
-        return {"status": "success", "reply": "Дякуємо! Менеджер зателефонує вам найближчим часом."}
-    return {"status": "error", "reply": "Помилка відправки в Telegram."}
+    
+    sent = send_telegram_notification(data.phone, data.message)
+    if sent:
+        return {"status": "success", "reply": "Дякуємо! Номер отримано. Наш менеджер зателефонує вам найближчим часом."}
+    else:
+        return {"status": "success", "reply": "Дякуємо! Заявку прийнято, скоро зв'яжемося."}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
@@ -239,27 +179,29 @@ async def chat(data: ChatRequest):
     if matched_products:
         lines = []
         for p in matched_products:
-            short_desc = p['description'][:250] + "..." if p['description'] else ""
+            short_desc = p['description'][:180] + "..." if p['description'] else ""
             lines.append(f"Модель: {p['name']} | Ціна: {p['price']} грн | Бренд: {p['vendor']} | Опис: {short_desc}")
-        catalog_context = "\n".join(lines)
+        catalog_context = "\n---\n".join(lines)
     else:
-        catalog_context = "Точних збігів за ключовими словами не знайдено."
+        catalog_context = "Точних моделей за прямим запитом не знайдено."
 
     system_instruction = f"""
-    Ти — досвідчений, привітний та ввічливий консультант магазину смарт-годинників ZORRO.
+    Ти — професійний і доброзичливий консультант інтернет-магазину годинників ZORRO.
     
-    ОСЬ ЗНАЙДЕНІ ТОВАРИ З БАЗИ ПІД ЗАПИТ КЛІЄНТА:
+    ЗНАЙДЕНІ ТОВАРИ З БАЗИ ПІД ЗАПИТ:
     {catalog_context}
     
-    ПРАВИЛА РОБОТИ:
-    1. Відповідай спираючись ЛИШЕ на знайдені товари. Ніколи не вигадуй характеристик чи цін.
-    2. Якщо знайдені товари підходять під запит — коротко розкажи про них, назви ціну та головну перевагу.
-    3. Якщо товари не відповідають точному запиту, ввічливо уточни деталі (наприклад: потрібен годинник для спорту, з можливістю дзвінків чи класичний?).
-    4. Якщо клієнт вагається — запропонуй залишити номер телефону для дзвінка менеджера.
-    5. Спілкуйся українською мовою, стисло, приємно та по суті.
+    ВИМОГИ ДО ВІДПОВІДІ:
+    1. Запропонуй до 3-4 варіантів у вигляді гарного списку.
+    2. Для кожного товару вкажи:
+       - Назву моделі
+       - Ціну в грн
+       - Головну фішку (1 речення: водостійкість, автономність, функції).
+    3. Оформлюй текст чисто, роби відступи між пунктами.
+    4. Наприкінці запропонуй: «Якщо бажаєте, напишіть свій номер телефону, і наш менеджер зателефонує для детальної консультації!».
+    5. Мова відповідей — українська.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
     reply = call_gemini_api(data.message, history_formatted, system_instruction)
     return {"reply": reply}
-    
