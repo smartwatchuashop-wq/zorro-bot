@@ -89,7 +89,8 @@ def sync_products_from_xml():
         count = 0
         with conn.cursor() as cur:
             for offer in offers:
-                vendor_code = offer.get('id') or (offer.findtext('vendorCode') or '').strip()
+                internal_id = offer.get('id') or ''
+                vendor_code = internal_id or (offer.findtext('vendorCode') or '').strip()
                 name = (offer.findtext('name') or offer.findtext('model') or '').strip()
                 price_str = offer.findtext('price') or '0'
                 try:
@@ -101,10 +102,17 @@ def sync_products_from_xml():
                 raw_desc = offer.findtext('description') or ''
                 description = clean_html(raw_desc)
                 
-                # Забираємо прямий URL товару, який сформував Хорошоп
-                url = (offer.findtext('url') or '').strip()
-                if not url or url.rstrip('/') == 'https://zorro.com.ua':
-                    url = f"https://zorro.com.ua/search/?search_string={urllib.parse.quote_plus(name)}"
+                # Точна обробка URL із Хорошопу
+                raw_url = (offer.findtext('url') or '').strip()
+                if raw_url.startswith('http'):
+                    url = raw_url
+                elif raw_url.startswith('/'):
+                    url = f"https://zorro.com.ua{raw_url}"
+                elif internal_id:
+                    # Універсальне пряме посилання Хорошопу за ID товару
+                    url = f"https://zorro.com.ua/products/{internal_id}/"
+                else:
+                    url = "https://zorro.com.ua"
 
                 image = (offer.findtext('picture') or offer.findtext('image') or '').strip()
 
@@ -257,8 +265,8 @@ async def chat(data: ChatRequest):
         html_cards = []
         for p in matched_products:
             prod_url = (p.get('url') or '').strip()
-            if not prod_url or prod_url.rstrip('/') == 'https://zorro.com.ua':
-                prod_url = f"https://zorro.com.ua/search/?search_string={urllib.parse.quote_plus(p['name'])}"
+            if not prod_url:
+                prod_url = "https://zorro.com.ua"
 
             short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та стильний годинник."
             lines.append(f"Модель: {p['name']} | Ціна: {p['price']} грн | Переваги: {short_desc}")
@@ -283,7 +291,7 @@ async def chat(data: ChatRequest):
     {catalog_context}
 
     ВАЖЛИВІ ПРАВИЛА:
-    1. Не пиши жодних HTML-посилань у своїй відповіді — список карток із посиланнями буде додано автоматично!
+    1. Не пиши жодних посилань у своїй відповіді — список карток із посиланнями буде додано автоматично!
     2. Коротко поясни, чому ці моделі чудово підійдуть під запит покупця.
     3. Обов'язково постав 1-2 влучні запитання для виявлення потреби (наприклад: для себе чи на подарунок, який стиль подобається більше, чи потрібні смарт-функції).
     4. Запропонуй залишити номер телефону для бронювання за спеціальною ціною або дзвінка менеджера.
