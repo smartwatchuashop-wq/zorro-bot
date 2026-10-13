@@ -1,6 +1,5 @@
 import os
 import re
-import urllib.parse
 import xml.etree.ElementTree as ET
 import requests
 import psycopg2
@@ -25,7 +24,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-XML_URL = "https://support.best-time.biz/api/feed/drops/ua"
+# Твоє пряме посилання на експорт з Хорошопу
+XML_URL = "https://zorro.com.ua/content/export/c929bc168711aedbbcad10f5bb726db0.xml?1791864654444"
 
 CANDIDATE_MODELS = [
     "gemini-2.5-flash",
@@ -64,6 +64,69 @@ def init_db():
     conn.close()
 
 init_db()
+
+def clean_html(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    cleanr = re.compile(r'<.*?>')
+    return re.sub(cleanr, '', raw_html).strip()
+
+def sync_products_from_xml():
+    conn = get_db_connection()
+    if not conn:
+        return {"status": "error", "message": "БД не підключена"}
+
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(XML_URL, headers=headers, timeout=60)
+        response.raise_for_status()
+
+        root = ET.fromstring(response.content)
+        offers = root.findall('.//offer')
+        if not offers:
+            offers = root.findall('.//item')
+
+        count = 0
+        with conn.cursor() as cur:
+            for offer in offers:
+                vendor_code = offer.get('id') or (offer.findtext('vendorCode') or '').strip()
+                name = (offer.findtext('name') or offer.findtext('model') or '').strip()
+                price_str = offer.findtext('price') or '0'
+                try:
+                    price = float(price_str.replace(',', '.'))
+                except ValueError:
+                    price = 0.0
+
+                vendor = (offer.findtext('vendor') or '').strip()
+                raw_desc = offer.findtext('description') or ''
+                description = clean_html(raw_desc)
+                url = (offer.findtext('url') or '').strip()
+                image = (offer.findtext('picture') or offer.findtext('image') or '').strip()
+
+                if not vendor_code:
+                    vendor_code = name
+
+                if name:
+                    cur.execute("""
+                        INSERT INTO products (vendor_code, name, price, vendor, description, url, image)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (vendor_code) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            price = EXCLUDED.price,
+                            vendor = EXCLUDED.vendor,
+                            description = EXCLUDED.description,
+                            url = EXCLUDED.url,
+                            image = EXCLUDED.image;
+                    """, (vendor_code, name, price, vendor, description, url, image))
+                    count += 1
+
+            conn.commit()
+        conn.close()
+        return {"status": "success", "imported": count}
+    except Exception as e:
+        if conn:
+            conn.close()
+        return {"status": "error", "message": str(e)}
 
 def search_products_in_db(query: str, limit: int = 3):
     conn = get_db_connection()
@@ -161,6 +224,10 @@ class CallbackRequest(BaseModel):
 def root():
     return {"status": "ok", "database_connected": DATABASE_URL is not None}
 
+@app.get("/api/sync-catalog")
+def sync_catalog():
+    return sync_products_from_xml()
+
 @app.post("/api/callback")
 async def callback(data: CallbackRequest):
     if not data.phone:
@@ -181,8 +248,7 @@ async def chat(data: ChatRequest):
     if matched_products:
         lines = []
         for p in matched_products:
-            search_query = urllib.parse.quote_plus(p['name'])
-            prod_url = f"https://zorro.com.ua/search/?q={search_query}"
+            prod_url = p.get('url') or 'https://zorro.com.ua'
             short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та надійний аксесуар."
             lines.append(f"Назва: {p['name']} | Ціна: {p['price']} грн | Посилання: {prod_url} | Опис: {short_desc}")
         catalog_context = "\n---\n".join(lines)
@@ -201,7 +267,7 @@ async def chat(data: ChatRequest):
     2. Якщо пропонуєш товари, обов'язково оформи кожен пункт так:
        👉 <b>Назва моделі</b> — Ціна грн
        Коротка ключова перевага моделі (водостійкість, дзвінки, автономність, дизайн).
-       <a href="ПОСИЛАННЯ_З_ДАННИХ" target="_blank" style="color:#0070f3; text-decoration:underline;">👉 Подивитися на сайті</a>
+       <a href="ПОСИЛАННЯ_З_ДАННИХ" target="_blank" style="color:#0070f3; text-decoration:underline; font-weight:600;">👉 Переглянути товар</a>
     3. Обов'язково став активне уточнююче запитання наприкінці, щоб виявити потребу:
        - «Ви підбираєте годинник для себе чи на подарунок?»
        - «Який стиль вам ближче: масивний тактичний чи акуратний класичний?»
