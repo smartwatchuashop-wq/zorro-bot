@@ -176,11 +176,11 @@ async def callback(data: CallbackRequest):
 async def chat(data: ChatRequest):
     matched_products = search_products_in_db(data.message, limit=3)
     
-    catalog_context = ""
-    if matched_products:
-        lines = []
+    import urllib.parse
         for p in matched_products:
-            prod_url = p.get('url') or 'https://zorro.com.ua'
+            search_query = urllib.parse.quote_plus(p['name'])
+            prod_url = f"https://zorro.com.ua/search/?q={search_query}"
+            
             short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та надійний аксесуар."
             lines.append(f"Назва: {p['name']} | Ціна: {p['price']} грн | Посилання: {prod_url} | Опис: {short_desc}")
         catalog_context = "\n---\n".join(lines)
