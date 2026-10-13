@@ -64,13 +64,13 @@ def init_db():
 
 init_db()
 
-def search_products_in_db(query: str, limit: int = 5):
+def search_products_in_db(query: str, limit: int = 4):
     conn = get_db_connection()
     if not conn:
         return []
 
     words = re.findall(r'\w+', query.lower())
-    stop_words = {"годинник", "годинники", "хочу", "порадь", "купити", "шукаю", "підкажи", "є", "до", "ціна"}
+    stop_words = {"годинник", "годинники", "хочу", "порадь", "купити", "шукаю", "підкажи", "є", "до", "ціна", "з", "для"}
     search_terms = [w for w in words if w not in stop_words and len(w) > 2]
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -86,7 +86,7 @@ def search_products_in_db(query: str, limit: int = 5):
             params.append(limit)
             cur.execute(sql, tuple(params))
         else:
-            cur.execute("SELECT name, price, vendor, description, url, image FROM products LIMIT %s", (limit,))
+            cur.execute("SELECT name, price, vendor, description, url, image FROM products ORDER BY RANDOM() LIMIT %s", (limit,))
         
         results = cur.fetchall()
     conn.close()
@@ -95,9 +95,9 @@ def search_products_in_db(query: str, limit: int = 5):
 def send_telegram_notification(phone: str, message: str = ""):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
-    text = f"📞 <b>НОВА ЗАЯВКА НА ДЗВІНОК З ЧАТУ!</b>\n\n<b>Телефон:</b> <code>{phone}</code>"
+    text = f"📞 <b>НОВА ЗАЯВКА НА ДЗВІНОК З ЧАТУ ZORRO!</b>\n\n<b>Телефон:</b> <code>{phone}</code>"
     if message:
-        text += f"\n<b>Повідомлення клієнта:</b> {message}"
+        text += f"\n<b>Контекст діалогу:</b> {message}"
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
     try:
@@ -121,7 +121,7 @@ def call_gemini_api(prompt_text: str, history_list: list = [], system_instructio
 
     payload = {
         "contents": contents,
-        "generationConfig": {"temperature": 0.3}
+        "generationConfig": {"temperature": 0.4}
     }
     if system_instruction:
         payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
@@ -132,7 +132,7 @@ def call_gemini_api(prompt_text: str, history_list: list = [], system_instructio
             clean_model = model.replace("models/", "")
             url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{clean_model}:generateContent?key={GEMINI_API_KEY}"
             try:
-                res = requests.post(url, json=payload, timeout=12)
+                res = requests.post(url, json=payload, timeout=14)
                 if res.status_code == 200:
                     res_json = res.json()
                     return res_json['candidates'][0]['content']['parts'][0]['text']
@@ -142,7 +142,7 @@ def call_gemini_api(prompt_text: str, history_list: list = [], system_instructio
             except Exception as e:
                 errors_log.append(f"[{api_ver}/{clean_model}]: {str(e)}")
 
-    return f"Помилка Gemini: {'; '.join(errors_log[:1])}"
+    return f"Помилка зв'язку: {'; '.join(errors_log[:1])}"
 
 class MessageItem(BaseModel):
     role: str
@@ -163,43 +163,49 @@ def root():
 @app.post("/api/callback")
 async def callback(data: CallbackRequest):
     if not data.phone:
-        return {"status": "error", "reply": "Введіть номер телефону."}
+        return {"status": "error", "reply": "Будь ласка, вкажіть ваш номер телефону."}
     
-    sent = send_telegram_notification(data.phone, data.message)
-    if sent:
-        return {"status": "success", "reply": "Дякуємо! Номер отримано. Наш менеджер зателефонує вам найближчим часом."}
-    else:
-        return {"status": "success", "reply": "Дякуємо! Заявку прийнято, скоро зв'яжемося."}
+    send_telegram_notification(data.phone, data.message)
+    reply_text = (
+        "Чудово! Номер збережено, наш менеджер зв'яжеться з вами найближчим часом. "
+        "Підкажіть, яка з запропонованих моделей вам сподобалася найбільше, чи можливо ви шукаєте годинник на подарунок?"
+    )
+    return {"status": "success", "reply": reply_text}
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
-    matched_products = search_products_in_db(data.message, limit=4)
+    matched_products = search_products_in_db(data.message, limit=3)
     
     catalog_context = ""
     if matched_products:
         lines = []
         for p in matched_products:
-            short_desc = p['description'][:180] + "..." if p['description'] else ""
-            lines.append(f"Модель: {p['name']} | Ціна: {p['price']} грн | Бренд: {p['vendor']} | Опис: {short_desc}")
+            prod_url = p.get('url') or 'https://zorro.com.ua'
+            short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та надійний аксесуар."
+            lines.append(f"Назва: {p['name']} | Ціна: {p['price']} грн | Посилання: {prod_url} | Опис: {short_desc}")
         catalog_context = "\n---\n".join(lines)
     else:
-        catalog_context = "Точних моделей за прямим запитом не знайдено."
+        catalog_context = "Точних моделей за ключовими словами не знайдено, запропонуй звернутися до каталогу або уточнити критерії."
 
     system_instruction = f"""
-    Ти — професійний і доброзичливий консультант інтернет-магазину годинників ZORRO.
-    
-    ЗНАЙДЕНІ ТОВАРИ З БАЗИ ПІД ЗАПИТ:
+    Ти — найкращий онлайн-консультант і менеджер з продажу інтернет-магазину годинників ZORRO (zorro.com.ua).
+    Твоя головна мета — допомогти клієнту вибрати ідеальний годинник, зацікавити його покупкою та виявити його потреби.
+
+    ДАНІ ПРО РЕКОМЕНДОВАНІ ТОВАРИ З КАТАЛОГУ:
     {catalog_context}
-    
-    ВИМОГИ ДО ВІДПОВІДІ:
-    1. Запропонуй до 3-4 варіантів у вигляді гарного списку.
-    2. Для кожного товару вкажи:
-       - Назву моделі
-       - Ціну в грн
-       - Головну фішку (1 речення: водостійкість, автономність, функції).
-    3. Оформлюй текст чисто, роби відступи між пунктами.
-    4. Наприкінці запропонуй: «Якщо бажаєте, напишіть свій номер телефону, і наш менеджер зателефонує для детальної консультації!».
-    5. Мова відповідей — українська.
+
+    ПРАВИЛА ОФОРМЛЕННЯ ТА ПРОДАЖІВ:
+    1. Не пиши складний markdown із зірочками на кшталт **'Jaragar'**. Пиши чисто, живо й красиво.
+    2. Якщо пропонуєш товари, оформи кожен пункт так:
+       👉 <b>Назва моделі</b> — Ціна грн
+       Коротка ключова перевага моделі (водостійкість, дзвінки, автономність, дизайн).
+       <a href="ПОСИЛАННЯ_НА_ТОВАР" target="_blank" style="color:#0070f3; text-decoration:underline;">👉 Подивитися на сайті</a>
+    3. Обов'язково став активне уточнююче запитання наприкінці, щоб виявити потребу:
+       - «Ви підбираєте годинник собі чи на подарунок?»
+       - «Який стиль вам ближче: масивний тактичний чи акуратний класичний?»
+       - «Чи важлива для вас наявність функції дзвінків з годинника?»
+    4. Запропонуй залишити номер телефону для резерву товару або швидкої консультації менеджера.
+    5. Спілкуйся виключно українською мовою, ввічливо, енергійно та позитивно.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
