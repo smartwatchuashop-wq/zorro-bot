@@ -24,7 +24,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Твоє пряме посилання на експорт з Хорошопу
 XML_URL = "https://zorro.com.ua/content/export/c929bc168711aedbbcad10f5bb726db0.xml?1791864654444"
 
 CANDIDATE_MODELS = [
@@ -146,11 +145,11 @@ def search_products_in_db(query: str, limit: int = 3):
                 param = f"%{term}%"
                 params.extend([param, param, param])
             
-            sql = f"SELECT name, price, vendor, description, url, image FROM products WHERE {' OR '.join(conditions)} LIMIT %s"
+            sql = f"SELECT vendor_code, name, price, vendor, description, url, image FROM products WHERE {' OR '.join(conditions)} LIMIT %s"
             params.append(limit)
             cur.execute(sql, tuple(params))
         else:
-            cur.execute("SELECT name, price, vendor, description, url, image FROM products ORDER BY RANDOM() LIMIT %s", (limit,))
+            cur.execute("SELECT vendor_code, name, price, vendor, description, url, image FROM products ORDER BY RANDOM() LIMIT %s", (limit,))
         
         results = cur.fetchall()
     conn.close()
@@ -251,11 +250,20 @@ async def chat(data: ChatRequest):
         lines = []
         html_cards = []
         for p in matched_products:
-            prod_url = p.get('url') or 'https://zorro.com.ua'
+            raw_url = (p.get('url') or '').strip()
+            v_code = (p.get('vendor_code') or '').strip()
+
+            # Перевіряємо посилання на коректність і додаємо структуру Хорошопу
+            if raw_url and raw_url not in ["https://zorro.com.ua", "https://zorro.com.ua/"]:
+                prod_url = raw_url
+            elif v_code:
+                prod_url = f"https://zorro.com.ua/smart-godinniki/{v_code}/"
+            else:
+                prod_url = "https://zorro.com.ua"
+
             short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та стильний годинник."
             lines.append(f"Модель: {p['name']} | Ціна: {p['price']} грн | Переваги: {short_desc}")
             
-            # Надійне пряме посилання формується сервером, а не ШІ:
             card = (
                 f"👉 <b>{p['name']}</b> — {p['price']} грн<br>"
                 f"{short_desc}<br>"
@@ -276,16 +284,15 @@ async def chat(data: ChatRequest):
     {catalog_context}
 
     ВАЖЛИВІ ПРАВИЛА:
-    1. Не пиши жодних HTML-посилань у своїй відповіді — список карток із посиланнями буде додано автоматично!
+    1. Не пиши жодних посилань у своїй відповіді — список карток із посиланнями буде додано автоматично!
     2. Коротко поясни, чому ці моделі чудово підійдуть під запит покупця.
     3. Обов'язково постав 1-2 влучні запитання для виявлення потреби (наприклад: для себе чи на подарунок, який стиль подобається більше, чи потрібні смарт-функції).
-    4. Запропонуй залишити номер телефону для бронювання за спеціальною ціною або дзвінка менеджера.
+    4. Запропонуй залишити номер телефону для швидкої консультації менеджера або бронювання моделі.
     5. Спілкуйся виключно українською мовою.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
     ai_reply = call_gemini_api(data.message, history_formatted, system_instruction)
     
-    # З'єднуємо слова ШІ з гарантованими прямими посиланнями
     final_reply = ai_reply + products_html if products_html else ai_reply
     return {"reply": final_reply}
