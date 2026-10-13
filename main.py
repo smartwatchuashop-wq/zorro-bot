@@ -25,7 +25,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-XML_URL = "https://zorro.com.ua/content/export/c929bc168711aedbbcad10f5bb726db0.xml?1791864654444"
+XML_URL = "https://zorro.com.ua/content/export/c929bc168711aedbbcad10f5bb726db0.xml"
 
 CANDIDATE_MODELS = [
     "gemini-2.5-flash",
@@ -102,15 +102,14 @@ def sync_products_from_xml():
                 raw_desc = offer.findtext('description') or ''
                 description = clean_html(raw_desc)
                 
-                # Точна обробка URL із Хорошопу
                 raw_url = (offer.findtext('url') or '').strip()
-                if raw_url.startswith('http'):
+                if raw_url.startswith('http') and raw_url.rstrip('/') != 'https://zorro.com.ua':
                     url = raw_url
                 elif raw_url.startswith('/'):
                     url = f"https://zorro.com.ua{raw_url}"
-                elif internal_id:
-                    # Універсальне пряме посилання Хорошопу за ID товару
-                    url = f"https://zorro.com.ua/products/{internal_id}/"
+                elif name:
+                    # Точний підтверджений пошук Хорошопу:
+                    url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(name)}"
                 else:
                     url = "https://zorro.com.ua"
 
@@ -265,8 +264,9 @@ async def chat(data: ChatRequest):
         html_cards = []
         for p in matched_products:
             prod_url = (p.get('url') or '').strip()
-            if not prod_url:
-                prod_url = "https://zorro.com.ua"
+            # Якщо посилання немає або це просто головна сторінка — формуємо перевірений робочий пошук Хорошопу:
+            if not prod_url or prod_url.rstrip('/') == 'https://zorro.com.ua':
+                prod_url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(p['name'])}"
 
             short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та стильний годинник."
             lines.append(f"Модель: {p['name']} | Ціна: {p['price']} грн | Переваги: {short_desc}")
