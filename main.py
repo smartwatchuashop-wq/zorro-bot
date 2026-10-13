@@ -1,5 +1,6 @@
 import os
 import re
+import urllib.parse
 import xml.etree.ElementTree as ET
 import requests
 import psycopg2
@@ -64,7 +65,7 @@ def init_db():
 
 init_db()
 
-def search_products_in_db(query: str, limit: int = 4):
+def search_products_in_db(query: str, limit: int = 3):
     conn = get_db_connection()
     if not conn:
         return []
@@ -167,8 +168,8 @@ async def callback(data: CallbackRequest):
     
     send_telegram_notification(data.phone, data.message)
     reply_text = (
-        "Чудово! Номер збережено, наш менеджер зв'яжеться з вами найближчим часом. "
-        "Підкажіть, яка з запропонованих моделей вам сподобалася найбільше, чи можливо ви шукаєте годинник на подарунок?"
+        "Чудово! Номер отримано, наш менеджер зв'яжеться з вами найближчим часом. "
+        "Підкажіть, яка з моделей вас зацікавила найбільше, або який стиль годинника ви шукаєте?"
     )
     return {"status": "success", "reply": reply_text}
 
@@ -176,11 +177,12 @@ async def callback(data: CallbackRequest):
 async def chat(data: ChatRequest):
     matched_products = search_products_in_db(data.message, limit=3)
     
-    import urllib.parse
+    catalog_context = ""
+    if matched_products:
+        lines = []
         for p in matched_products:
             search_query = urllib.parse.quote_plus(p['name'])
             prod_url = f"https://zorro.com.ua/search/?q={search_query}"
-            
             short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та надійний аксесуар."
             lines.append(f"Назва: {p['name']} | Ціна: {p['price']} грн | Посилання: {prod_url} | Опис: {short_desc}")
         catalog_context = "\n---\n".join(lines)
@@ -196,15 +198,15 @@ async def chat(data: ChatRequest):
 
     ПРАВИЛА ОФОРМЛЕННЯ ТА ПРОДАЖІВ:
     1. Не пиши складний markdown із зірочками на кшталт **'Jaragar'**. Пиши чисто, живо й красиво.
-    2. Якщо пропонуєш товари, оформи кожен пункт так:
+    2. Якщо пропонуєш товари, обов'язково оформи кожен пункт так:
        👉 <b>Назва моделі</b> — Ціна грн
        Коротка ключова перевага моделі (водостійкість, дзвінки, автономність, дизайн).
-       <a href="ПОСИЛАННЯ_НА_ТОВАР" target="_blank" style="color:#0070f3; text-decoration:underline;">👉 Подивитися на сайті</a>
+       <a href="ПОСИЛАННЯ_З_ДАННИХ" target="_blank" style="color:#0070f3; text-decoration:underline;">👉 Подивитися на сайті</a>
     3. Обов'язково став активне уточнююче запитання наприкінці, щоб виявити потребу:
-       - «Ви підбираєте годинник собі чи на подарунок?»
+       - «Ви підбираєте годинник для себе чи на подарунок?»
        - «Який стиль вам ближче: масивний тактичний чи акуратний класичний?»
-       - «Чи важлива для вас наявність функції дзвінків з годинника?»
-    4. Запропонуй залишити номер телефону для резерву товару або швидкої консультації менеджера.
+       - «Чи важлива для вас функція дзвінків з годинника або водонепроникність?»
+    4. Запропонуй залишити номер телефону для швидкої консультації менеджера або бронювання моделі.
     5. Спілкуйся виключно українською мовою, ввічливо, енергійно та позитивно.
     """
 
