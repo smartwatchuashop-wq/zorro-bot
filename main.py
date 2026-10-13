@@ -1,5 +1,6 @@
 import os
 import re
+import urllib.parse
 import xml.etree.ElementTree as ET
 import requests
 import psycopg2
@@ -99,7 +100,12 @@ def sync_products_from_xml():
                 vendor = (offer.findtext('vendor') or '').strip()
                 raw_desc = offer.findtext('description') or ''
                 description = clean_html(raw_desc)
+                
+                # Забираємо прямий URL товару, який сформував Хорошоп
                 url = (offer.findtext('url') or '').strip()
+                if not url or url.rstrip('/') == 'https://zorro.com.ua':
+                    url = f"https://zorro.com.ua/search/?search_string={urllib.parse.quote_plus(name)}"
+
                 image = (offer.findtext('picture') or offer.findtext('image') or '').strip()
 
                 if not vendor_code:
@@ -250,16 +256,9 @@ async def chat(data: ChatRequest):
         lines = []
         html_cards = []
         for p in matched_products:
-            raw_url = (p.get('url') or '').strip()
-            v_code = (p.get('vendor_code') or '').strip()
-
-            # Перевіряємо посилання на коректність і додаємо структуру Хорошопу
-            if raw_url and raw_url not in ["https://zorro.com.ua", "https://zorro.com.ua/"]:
-                prod_url = raw_url
-            elif v_code:
-                prod_url = f"https://zorro.com.ua/smart-godinniki/{v_code}/"
-            else:
-                prod_url = "https://zorro.com.ua"
+            prod_url = (p.get('url') or '').strip()
+            if not prod_url or prod_url.rstrip('/') == 'https://zorro.com.ua':
+                prod_url = f"https://zorro.com.ua/search/?search_string={urllib.parse.quote_plus(p['name'])}"
 
             short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та стильний годинник."
             lines.append(f"Модель: {p['name']} | Ціна: {p['price']} грн | Переваги: {short_desc}")
@@ -284,10 +283,10 @@ async def chat(data: ChatRequest):
     {catalog_context}
 
     ВАЖЛИВІ ПРАВИЛА:
-    1. Не пиши жодних посилань у своїй відповіді — список карток із посиланнями буде додано автоматично!
+    1. Не пиши жодних HTML-посилань у своїй відповіді — список карток із посиланнями буде додано автоматично!
     2. Коротко поясни, чому ці моделі чудово підійдуть під запит покупця.
     3. Обов'язково постав 1-2 влучні запитання для виявлення потреби (наприклад: для себе чи на подарунок, який стиль подобається більше, чи потрібні смарт-функції).
-    4. Запропонуй залишити номер телефону для швидкої консультації менеджера або бронювання моделі.
+    4. Запропонуй залишити номер телефону для бронювання за спеціальною ціною або дзвінка менеджера.
     5. Спілкуйся виключно українською мовою.
     """
 
