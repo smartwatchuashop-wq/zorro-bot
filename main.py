@@ -108,12 +108,13 @@ def sync_products_from_xml():
                 elif raw_url.startswith('/'):
                     url = f"https://zorro.com.ua{raw_url}"
                 elif name:
-                    # Точний підтверджений пошук Хорошопу:
                     url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(name)}"
                 else:
                     url = "https://zorro.com.ua"
 
-                image = (offer.findtext('picture') or offer.findtext('image') or '').strip()
+                # Зчитуємо зображення з фіду
+                picture_el = offer.find('picture') or offer.find('image')
+                image = picture_el.text.strip() if (picture_el is not None and picture_el.text) else ''
 
                 if not vendor_code:
                     vendor_code = name
@@ -264,42 +265,56 @@ async def chat(data: ChatRequest):
         html_cards = []
         for p in matched_products:
             prod_url = (p.get('url') or '').strip()
-            # Якщо посилання немає або це просто головна сторінка — формуємо перевірений робочий пошук Хорошопу:
             if not prod_url or prod_url.rstrip('/') == 'https://zorro.com.ua':
                 prod_url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(p['name'])}"
 
-            short_desc = p['description'][:140] + "..." if p['description'] else "Сучасний та стильний годинник."
+            img_src = p.get('image') or 'https://zorro.com.ua/content/images/no-image.png'
+            short_desc = p['description'][:110] + "..." if p['description'] else "Оригінальний годинник з гарантією."
+            price_val = int(p['price']) if p['price'] else 0
+            
             lines.append(f"Модель: {p['name']} | Ціна: {p['price']} грн | Переваги: {short_desc}")
             
-            card = (
-                f"👉 <b>{p['name']}</b> — {p['price']} грн<br>"
-                f"{short_desc}<br>"
-                f"<a href=\"{prod_url}\" target=\"_blank\" style=\"color:#0070f3; font-weight:bold; text-decoration:underline;\">👉 Переглянути товар на сайті</a>"
-            )
+            # Стилізована картка товару у форматі Rozetka AI (відкривається в тому ж вікні target="_self")
+            card = f"""
+            <div style="background:#fff; border:1px solid #e2e5e8; border-radius:12px; padding:10px; margin-top:8px; box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+              <div style="display:flex; gap:10px; align-items:center;">
+                <img src="{img_src}" alt="{p['name']}" style="width:68px; height:68px; object-fit:contain; border-radius:8px; background:#f9f9f9; flex-shrink:0;">
+                <div style="flex:1; min-width:0;">
+                  <a href="{prod_url}" target="_self" style="color:#222; text-decoration:none; font-weight:600; font-size:12.5px; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">{p['name']}</a>
+                  <div style="display:flex; align-items:baseline; justify-content:space-between; margin-top:6px;">
+                    <span style="font-size:15px; font-weight:700; color:#111;">{price_val} ₴</span>
+                    <a href="{prod_url}" target="_self" style="background:#00a046; color:#fff; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:600; text-decoration:none; display:inline-block;">Купити</a>
+                  </div>
+                </div>
+              </div>
+              <div style="font-size:11.5px; color:#555; margin-top:8px; line-height:1.35; border-top:1px dashed #eee; padding-top:6px;">
+                {short_desc}
+              </div>
+            </div>
+            """
             html_cards.append(card)
             
         catalog_context = "\n---\n".join(lines)
-        products_html = "<br><br>" + "<br><br>".join(html_cards)
+        products_html = "".join(html_cards)
     else:
         catalog_context = "Товарів не знайдено за точним запитом. Запропонуй звернутися до менеджера або уточнити критерії пошуку."
 
     system_instruction = f"""
     Ти — професійний онлайн-консультант інтернет-магазину годинників ZORRO (zorro.com.ua).
-    Твоє завдання — ввічливо та експертно проконсультувати клієнта щодо вибору годинника.
+    Твоє завдання — лаконічно й тепло проконсультувати покупця.
 
     ЗНАЙДЕНІ ТОВАРИ:
     {catalog_context}
 
     ВАЖЛИВІ ПРАВИЛА:
-    1. Не пиши жодних посилань у своїй відповіді — список карток із посиланнями буде додано автоматично!
-    2. Коротко поясни, чому ці моделі чудово підійдуть під запит покупця.
-    3. Обов'язково постав 1-2 влучні запитання для виявлення потреби (наприклад: для себе чи на подарунок, який стиль подобається більше, чи потрібні смарт-функції).
-    4. Запропонуй залишити номер телефону для бронювання за спеціальною ціною або дзвінка менеджера.
-    5. Спілкуйся виключно українською мовою.
+    1. Не пиши посилань і цін у тексті — картки товарів додаються автоматично під твоїм повідомленням!
+    2. У 1-2 реченнях поясни, чому обрані моделі підходять під запит.
+    3. Постав короткі навідні запитання або запропонуй залишити номер для консультації менеджера.
+    4. Мова виключно українська.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
     ai_reply = call_gemini_api(data.message, history_formatted, system_instruction)
     
-    final_reply = ai_reply + products_html if products_html else ai_reply
+    final_reply = ai_reply + ("<br>" + products_html if products_html else "")
     return {"reply": final_reply}
