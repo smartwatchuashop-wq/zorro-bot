@@ -114,7 +114,6 @@ def sync_products_from_xml():
                 else:
                     url = "https://zorro.com.ua"
 
-                # Забираємо зображення з фіду
                 pic = offer.find('picture')
                 if pic is None:
                     pic = offer.find('image')
@@ -167,123 +166,167 @@ def call_gemini(prompt_text: str, system_instruction: str = "", temperature: flo
                 continue
     return ""
 
-def universal_smart_search(user_query: str, limit: int = 3):
-    """ШІ аналізує абсолютно будь-які запити покупців без жорстких обмежень"""
+def diverse_smart_search(user_query: str, limit: int = 3):
+    """
+    Розумний пошук із гарантованою диверсифікацією брендів та відсіканням дитячого спаму.
+    """
     conn = get_db_connection()
     if not conn:
         return []
 
     parse_prompt = f"""
-    Проаналізуй запит покупця інтернет-магазину годинників: "{user_query}"
-    Сформуй JSON (чистий JSON без бектиків):
+    Проаналізуй запит покупця годинників ZORRO: "{user_query}"
+    Виділи параметри строго у форматі JSON (чистий JSON):
     {{
         "max_price": число або null,
-        "features": ["окремі", "пошукові", "слова", "синоніми", "характеристики"]
+        "min_price": число або null,
+        "is_kids": true/false (тільки якщо явно запитують для дитини),
+        "target_gender": "men" | "women" | "kids" | "unisex" | null,
+        "keywords": ["ключові", "ознаки", "стиль", "функції", "матеріали"]
     }}
-    Приклад: "з ліхтариком і тиском" -> "features": ["ліхтар", "flash", "тиск", "тонометр", "пульс", "smart"]
     """
     ai_json = call_gemini(parse_prompt, temperature=0.1)
     
     max_price = None
-    features = []
+    min_price = None
+    is_kids = False
+    target_gender = None
+    keywords = []
+
     try:
         match = re.search(r'\{.*\}', ai_json, re.DOTALL)
         if match:
-            data = json.loads(match.group(0))
-            max_price = data.get("max_price")
-            features = data.get("features") or []
+            parsed = json.loads(match.group(0))
+            max_price = parsed.get("max_price")
+            min_price = parsed.get("min_price")
+            is_kids = parsed.get("is_kids", False)
+            target_gender = parsed.get("target_gender")
+            keywords = parsed.get("keywords") or []
     except Exception:
         pass
 
-    if not features:
-        features = [w for w in re.findall(r'\w+', user_query.lower()) if len(w) > 2 and w not in ["годинник", "годинники", "хочу", "порадь"]]
+    if not keywords:
+        clean_words = re.findall(r'\w+', user_query.lower())
+        stop_words = {"годинник", "годинники", "порадь", "хочу", "який", "які", "підкажи", "купити", "цікаві"}
+        keywords = [w for w in clean_words if len(w) > 2 and w not in stop_words]
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         score_parts = []
         params = []
-        
-        for feat in features[:8]:
-            p = f"%{feat.lower()}%"
+
+        for kw in keywords[:6]:
+            p = f"%{kw.lower()}%"
             score_parts.append(f"""
-                (CASE WHEN LOWER(name) LIKE %s THEN 3 
-                      WHEN LOWER(description) LIKE %s THEN 1 
-                      WHEN LOWER(vendor) LIKE %s THEN 2
-                      ELSE 0 END)
+                (CASE 
+                    WHEN LOWER(name) LIKE %s THEN 4
+                    WHEN LOWER(vendor) LIKE %s THEN 3
+                    WHEN LOWER(description) LIKE %s THEN 1
+                    ELSE 0 
+                END)
             """)
             params.extend([p, p, p])
 
-        score_sql = " + ".join(score_parts) if score_parts else "0"
+        # Фільтрація статі/віку
+        if not is_kids:
+            score_parts.append("""
+                (CASE 
+                    WHEN LOWER(name) LIKE '%дитяч%' OR LOWER(description) LIKE '%для дітей%' OR LOWER(name) LIKE '%game%' THEN -8 
+                    ELSE 0 
+                END)
+            """)
         
-        where_parts = []
-        where_params = []
-        if max_price:
-            where_parts.append("price <= %s")
-            where_params.append(float(max_price))
+        if target_gender == "men":
+            score_parts.append("(CASE WHEN LOWER(name) LIKE '%чоловіч%' OR LOWER(description) LIKE '%чоловіч%' THEN 3 ELSE 0 END)")
+        elif target_gender == "women":
+            score_parts.append("(CASE WHEN LOWER(name) LIKE '%жіноч%' OR LOWER(description) LIKE '%жіноч%' THEN 4 ELSE 0 END)")
 
-        where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-        
-        # Сортуємо: спочатку максимум збігів за ознаками, потім наявність картинки
-        full_params = params + where_params + [limit]
-        query = f"""
+        score_sql = " + ".join(score_parts) if score_parts else "1"
+
+        where_clauses = ["image IS NOT NULL AND image != ''"]
+        if max_price:
+            where_clauses.append("price <= %s")
+            params.append(float(max_price))
+        if min_price:
+            where_clauses.append("price >= %s")
+            params.append(float(min_price))
+
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        # Витягуємо топ кандидатів із високим балом
+        sql = f"""
             SELECT vendor_code, name, price, vendor, description, url, image,
-                   ({score_sql}) as score
+                   ({score_sql}) AS match_score
             FROM products
             {where_sql}
-            ORDER BY score DESC, (image IS NOT NULL AND image != '') DESC, price ASC
-            LIMIT %s;
+            ORDER BY match_score DESC, price DESC
+            LIMIT 25;
         """
-        cur.execute(query, tuple(full_params))
-        results = cur.fetchall()
+        cur.execute(sql, tuple(params))
+        all_candidates = cur.fetchall()
 
-        if not results:
-            cur.execute("SELECT vendor_code, name, price, vendor, description, url, image FROM products ORDER BY (image != '') DESC, RANDOM() LIMIT %s", (limit,))
-            results = cur.fetchall()
+        # ДИВЕРСИФІКАЦІЯ: не більше 1 товару від одного бренду, щоб показати вибір
+        selected = []
+        seen_vendors = set()
+
+        for prod in all_candidates:
+            vendor = (prod.get('vendor') or 'unknown').lower().strip()
+            # Якщо бренд ще не показували — додаємо
+            if vendor not in seen_vendors:
+                selected.append(prod)
+                seen_vendors.add(vendor)
+            if len(selected) >= limit:
+                break
+
+        # Якщо не набралося limit через різні бренди, добираємо наступні найкращі
+        if len(selected) < limit:
+            for prod in all_candidates:
+                if prod not in selected:
+                    selected.append(prod)
+                if len(selected) >= limit:
+                    break
 
     conn.close()
-    return results
+    return selected
 
 def render_rozetka_card(p: dict) -> str:
-    """Генерує графічну картку у стилі Rozetka AI з кнопками 'Схожі товари' та 'Опис товару'"""
+    """Генерує картку у стилі Rozetka: сірий м'який фон, компактність, фірмові посилання"""
     prod_url = (p.get('url') or '').strip()
     if not prod_url or prod_url.rstrip('/') == 'https://zorro.com.ua':
         prod_url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(p['name'])}"
 
-    img_src = p.get('image')
-    if not img_src or not img_src.startswith('http'):
-        img_src = 'https://zorro.com.ua/content/images/no-image.png'
-
-    short_desc = p['description'][:110] + "..." if p.get('description') else "Оригінальний годинник з гарантією."
+    img_src = p.get('image') or 'https://zorro.com.ua/content/images/no-image.png'
+    short_desc = p['description'][:95] + "..." if p.get('description') else "Оригінальний годинник із офіційною гарантією."
     price_val = int(p['price']) if p.get('price') else 0
+    brand_label = p.get('vendor') or 'ZORRO'
     safe_name = p['name'].replace('"', '&quot;')
 
     return f"""
-    <div style="background:#ffffff; border:1px solid #e2e5e8; border-radius:12px; padding:10px; margin-top:8px; box-shadow:0 1px 4px rgba(0,0,0,0.05); text-align:left;">
+    <div style="box-sizing:border-box; width:100%; background:#f7f7f9; border:1px solid #e5e5ea; border-radius:12px; padding:10px; margin-top:8px; text-align:left;">
       <div style="display:flex; gap:10px; align-items:center;">
         <a href="{prod_url}" target="_self" style="flex-shrink:0;">
-          <img src="{img_src}" alt="{safe_name}" style="width:62px; height:62px; object-fit:contain; border-radius:8px; background:#f9fafb; border:1px solid #f0f0f0;">
+          <img src="{img_src}" alt="{safe_name}" style="width:60px; height:60px; object-fit:contain; border-radius:8px; background:#ffffff; border:1px solid #ebebeb;">
         </a>
         <div style="flex:1; min-width:0;">
-          <a href="{prod_url}" target="_self" style="color:#222; text-decoration:none; font-weight:600; font-size:12.5px; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+          <div style="font-size:10px; text-transform:uppercase; color:#8e8e93; font-weight:700; letter-spacing:0.3px;">{brand_label}</div>
+          <a href="{prod_url}" target="_self" style="color:#111; text-decoration:none; font-weight:600; font-size:12px; line-height:1.25; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
             {p['name']}
           </a>
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:5px;">
-            <span style="font-size:15px; font-weight:700; color:#111;">{price_val} ₴</span>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px;">
+            <span style="font-size:14px; font-weight:700; color:#111;">{price_val} ₴</span>
             <a href="{prod_url}" target="_self" style="background:#00a046; color:#ffffff; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:600; text-decoration:none; display:inline-block;">Купити</a>
           </div>
         </div>
       </div>
       
-      <!-- Текст опису/переваг -->
-      <div style="font-size:11.5px; color:#555; margin-top:7px; line-height:1.35; border-top:1px dashed #eee; padding-top:6px;">
+      <div style="font-size:11px; color:#555; margin-top:6px; line-height:1.3; border-top:1px dashed #dcdce0; padding-top:5px;">
         {short_desc}
       </div>
 
-      <!-- Кнопки в стилі Rozetka: Схожі товари та Опис товару -->
-      <div style="display:flex; gap:8px; margin-top:6px; padding-top:4px;">
-        <span class="ai-card-action" data-action="similar" data-name="{safe_name}" style="cursor:pointer; font-size:11px; color:#777; display:flex; align-items:center; gap:3px;">
+      <div style="display:flex; gap:12px; margin-top:6px; padding-top:2px;">
+        <span class="ai-card-action" data-action="similar" data-name="{safe_name}" style="cursor:pointer; font-size:11px; color:#00a046; font-weight:500; display:flex; align-items:center; gap:3px;">
           🔍 Схожі товари
         </span>
-        <span class="ai-card-action" data-action="desc" data-name="{safe_name}" style="cursor:pointer; font-size:11px; color:#777; display:flex; align-items:center; gap:3px;">
+        <span class="ai-card-action" data-action="desc" data-name="{safe_name}" style="cursor:pointer; font-size:11px; color:#666; display:flex; align-items:center; gap:3px;">
           📄 Опис товару
         </span>
       </div>
@@ -329,39 +372,36 @@ def sync_catalog():
 async def callback(data: CallbackRequest):
     if not data.phone:
         return {"status": "error", "reply": "Будь ласка, вкажіть ваш номер телефону."}
-    
     send_telegram_notification(data.phone, data.message)
     return {
         "status": "success", 
-        "reply": "Дякуємо! Номер зафіксовано, наш менеджер зв'яжеться з вами найближчим часом для консультації. Яку модель для вас відкласти або перевірити наявність?"
+        "reply": "Дякуємо! Номер збережено, наш консультант зателефонує вам найближчим часом. Яку саме модель для вас зарезервувати?"
     }
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
-    matched_products = universal_smart_search(data.message, limit=3)
+    matched_products = diverse_smart_search(data.message, limit=3)
     
     catalog_context = ""
     cards_html = []
     
     for p in matched_products:
-        short_desc = p['description'][:100] + "..." if p.get('description') else "Оригінальний годинник із гарантією."
-        catalog_context += f"• Модель: {p['name']} | Ціна: {p['price']} грн | Опис: {short_desc}\n"
+        short_desc = p['description'][:95] + "..." if p.get('description') else "Оригінальний годинник."
+        catalog_context += f"• Модель: {p['name']} (Бренд: {p.get('vendor')}) | Ціна: {p['price']} грн | Опис: {short_desc}\n"
         cards_html.append(render_rozetka_card(p))
 
     system_instruction = f"""
-    Ти — професійний, турботливий продавець-консультант інтернет-магазину годинників ZORRO (zorro.com.ua).
-    Поточний товар на сторінці (якщо є): {data.current_product or "головна сторінка/каталог"}.
+    Ти — професійний онлайн-консультант магазину годинників ZORRO (zorro.com.ua).
+    Твоє завдання — вести діалог впевнено, ввічливо та допомагати зробити покупку.
 
-    ТОВАРИ З КАТАЛОГУ:
-    {catalog_context if catalog_context else "Точного збігу за всіма словами немає."}
+    ПІДІБРАНІ ВАРІАНТИ З КАТАЛОГУ (РІЗНІ БРЕНДИ ДЛЯ ПОРІВНЯННЯ):
+    {catalog_context if catalog_context else "Точних моделей за цими критеріями не знайдено."}
 
-    ПРАВИЛА РОБОТИ ПРОДАВЦЯ:
-    1. Не пиши ціни і посилання вручну в тексті — графічні картки Rozetka додаються автоматично.
-    2. Якщо клієнт шукає складну або рідкісну комбінацію (наприклад, ліхтарик + тиск):
-       - Не кажи "немає"!
-       - Поясни, що це рідкісне поєднання функцій, тому ти підібрав найкращі варіанти окремо: моделі для контролю тиску та смарт-функцій, і надійні тактичні моделі з ліхтариком.
-       - Запитай покупця, що для нього в пріоритеті або запропонуй швидку консультацію менеджера.
-    3. Відповідай дружньо, коротко (2-3 речення), українською мовою.
+    ОБОВ'ЯЗКОВІ ПРАВИЛА:
+    1. Починай свою відповідь із суті: підтвердь побажання клієнта і коротко (1-2 речення) поясни, чому саме ці підібрані моделі варті уваги.
+    2. В кінці відповіді ЗАВЖДИ став відкрите питання для продовження діалогу (наприклад: "Якому формату надаєте перевагу — більш спортивному чи класичному?", або "Чи потрібна допомога з оформленням замовлення?").
+    3. Не пиши ціни й посилання текстом — графічні картки додаються автоматично.
+    4. Спілкуйся виключно чистою українською мовою.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
