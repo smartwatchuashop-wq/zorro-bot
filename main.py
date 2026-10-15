@@ -172,116 +172,121 @@ def diverse_smart_search(user_query: str, limit: int = 3):
         return []
 
     parse_prompt = f"""
-    Проаналізуй запит покупця годинників ZORRO: "{user_query}"
-    Виділи параметри строго у форматі JSON:
+    Проаналізуй запит покупця годинників: "{user_query}"
+    Виділи параметри строго у форматі JSON (тільки чистий JSON без коментарів):
     {{
         "max_price": число або null,
-        "min_price": число або null,
         "is_kids": true/false,
         "target_gender": "men" | "women" | "kids" | "unisex" | null,
-        "keywords": ["масив", "пошукових", "слів", "характеристик"]
+        "search_words": ["список", "ключових", "слів"]
     }}
     """
     ai_json = call_gemini(parse_prompt, temperature=0.1)
     
     max_price = None
-    min_price = None
     is_kids = False
     target_gender = None
-    keywords = []
+    search_words = []
 
     try:
         match = re.search(r'\{.*\}', ai_json, re.DOTALL)
         if match:
             parsed = json.loads(match.group(0))
             max_price = parsed.get("max_price")
-            min_price = parsed.get("min_price")
             is_kids = parsed.get("is_kids", False)
             target_gender = parsed.get("target_gender")
-            keywords = parsed.get("keywords") or []
+            search_words = parsed.get("search_words") or []
     except Exception:
         pass
 
-    if not keywords:
+    if not search_words:
         clean_words = re.findall(r'\w+', user_query.lower())
-        stop_words = {"годинник", "годинники", "порадь", "хочу", "який", "які", "підкажи", "купити", "цікаві"}
-        keywords = [w for w in clean_words if len(w) > 2 and w not in stop_words]
+        stop_words = {"годинник", "годинники", "порадь", "хочу", "який", "які", "підкажи", "купити", "цікаві", "моделі", "надійні"}
+        search_words = [w for w in clean_words if len(w) > 2 and w not in stop_words]
 
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        score_parts = []
-        params = []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Витягуємо товари, які відповідають бюджету та мають фотографію
+            where_clauses = ["image IS NOT NULL AND image != ''"]
+            query_params = []
 
-        # 1. Підрахунок релевантності за ключовими словами
-        for kw in keywords[:6]:
-            p = f"%{kw.lower()}%"
-            score_parts.append("""
-                (CASE 
-                    WHEN LOWER(name) LIKE %s THEN 4
-                    WHEN LOWER(vendor) LIKE %s THEN 3
-                    WHEN LOWER(description) LIKE %s THEN 1
-                    ELSE 0 
-                END)
-            """)
-            params.extend([p, p, p])
+            if max_price:
+                where_clauses.append("price <= %s")
+                query_params.append(float(max_price))
 
-        # 2. Фільтр дорослий/дитячий (без плейсхолдерів, вшиті літерали)
-        if not is_kids:
-            score_parts.append("""
-                (CASE 
-                    WHEN LOWER(name) LIKE '%дитяч%' OR LOWER(description) LIKE '%для дітей%' OR LOWER(name) LIKE '%game%' THEN -10 
-                    ELSE 0 
-                END)
-            """)
-        
-        if target_gender == "men":
-            score_parts.append("(CASE WHEN LOWER(name) LIKE '%чоловіч%' OR LOWER(description) LIKE '%чоловіч%' THEN 3 ELSE 0 END)")
-        elif target_gender == "women":
-            score_parts.append("(CASE WHEN LOWER(name) LIKE '%жіноч%' OR LOWER(description) LIKE '%жіноч%' THEN 4 ELSE 0 END)")
+            where_str = " AND ".join(where_clauses)
+            
+            # Беремо вибірку для аналізу релевантності в Python (це на 100% захищає від SQL IndexError)
+            sql = f"""
+                SELECT vendor_code, name, price, vendor, description, url, image
+                FROM products
+                WHERE {where_str}
+                ORDER BY price DESC
+                LIMIT 60;
+            """
+            cur.execute(sql, tuple(query_params))
+            candidates = cur.fetchall()
 
-        score_sql = " + ".join(score_parts) if score_parts else "1"
+            # Оцінюємо відповідність у коді
+            scored_list = []
+            for item in candidates:
+                name_l = (item['name'] or '').lower()
+                desc_l = (item['description'] or '').lower()
+                vend_l = (item['vendor'] or '').lower()
+                score = 0
 
-        where_clauses = ["image IS NOT NULL AND image != ''"]
-        if max_price:
-            where_clauses.append("price <= %s")
-            params.append(float(max_price))
-        if min_price:
-            where_clauses.append("price >= %s")
-            params.append(float(min_price))
+                # Оцінка за ключовими словами
+                for word in search_words:
+                    w = word.lower()
+                    if w in name_l:
+                        score += 5
+                    if w in vend_l:
+                        score += 3
+                    if w in desc_l:
+                        score += 1
 
-        where_sql = "WHERE " + " AND ".join(where_clauses)
+                # Штраф для дитячих моделей, якщо запит не дитячий
+                if not is_kids:
+                    if 'дитяч' in name_l or 'для дітей' in desc_l or 'game' in name_l:
+                        score -= 10
 
-        sql = f"""
-            SELECT vendor_code, name, price, vendor, description, url, image,
-                   ({score_sql}) AS match_score
-            FROM products
-            {where_sql}
-            ORDER BY match_score DESC, price DESC
-            LIMIT 25;
-        """
-        cur.execute(sql, tuple(params))
-        all_candidates = cur.fetchall()
+                # Врахування статі
+                if target_gender == "men" and ('чоловіч' in name_l or 'чоловіч' in desc_l):
+                    score += 4
+                elif target_gender == "women" and ('жіноч' in name_l or 'жіноч' in desc_l):
+                    score += 4
 
-        # Диверсифікація брендів: не показуємо підряд один і той самий бренд
-        selected = []
-        seen_vendors = set()
+                scored_list.append((score, item))
 
-        for prod in all_candidates:
-            vendor = (prod.get('vendor') or 'unknown').lower().strip()
-            if vendor not in seen_vendors:
-                selected.append(prod)
-                seen_vendors.add(vendor)
-            if len(selected) >= limit:
-                break
+            # Сортуємо: спочатку найвищий бал
+            scored_list.sort(key=lambda x: x[0], reverse=True)
 
-        if len(selected) < limit:
-            for prod in all_candidates:
-                if prod not in selected:
-                    selected.append(prod)
+            # Диверсифікація брендів: не більше 1 товару одного бренду
+            selected = []
+            seen_vendors = set()
+
+            for score, item in scored_list:
+                v = (item.get('vendor') or 'zorro').lower().strip()
+                if v not in seen_vendors:
+                    selected.append(item)
+                    seen_vendors.add(v)
                 if len(selected) >= limit:
                     break
 
-    conn.close()
-    return selected
+            if len(selected) < limit:
+                for score, item in scored_list:
+                    if item not in selected:
+                        selected.append(item)
+                    if len(selected) >= limit:
+                        break
+
+            conn.close()
+            return selected
+    except Exception as e:
+        print(f"Помилка пошуку: {e}")
+        if conn:
+            conn.close()
+        return []
 
 def render_rozetka_card(p: dict) -> str:
     prod_url = (p.get('url') or '').strip()
