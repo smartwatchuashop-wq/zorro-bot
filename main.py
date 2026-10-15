@@ -172,7 +172,7 @@ def diverse_smart_search(user_query: str, limit: int = 3):
         return []
 
     parse_prompt = f"""
-    Проаналізуй запит покупця годинників: "{user_query}"
+    Проаналізуй запит покупця інтернет-магазину годинників: "{user_query}"
     Виділи параметри строго у форматі JSON (тільки чистий JSON без коментарів):
     {{
         "max_price": число або null,
@@ -206,7 +206,6 @@ def diverse_smart_search(user_query: str, limit: int = 3):
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Витягуємо товари, які відповідають бюджету та мають фотографію
             where_clauses = ["image IS NOT NULL AND image != ''"]
             query_params = []
 
@@ -216,7 +215,6 @@ def diverse_smart_search(user_query: str, limit: int = 3):
 
             where_str = " AND ".join(where_clauses)
             
-            # Беремо вибірку для аналізу релевантності в Python (це на 100% захищає від SQL IndexError)
             sql = f"""
                 SELECT vendor_code, name, price, vendor, description, url, image
                 FROM products
@@ -227,7 +225,6 @@ def diverse_smart_search(user_query: str, limit: int = 3):
             cur.execute(sql, tuple(query_params))
             candidates = cur.fetchall()
 
-            # Оцінюємо відповідність у коді
             scored_list = []
             for item in candidates:
                 name_l = (item['name'] or '').lower()
@@ -235,7 +232,6 @@ def diverse_smart_search(user_query: str, limit: int = 3):
                 vend_l = (item['vendor'] or '').lower()
                 score = 0
 
-                # Оцінка за ключовими словами
                 for word in search_words:
                     w = word.lower()
                     if w in name_l:
@@ -245,12 +241,10 @@ def diverse_smart_search(user_query: str, limit: int = 3):
                     if w in desc_l:
                         score += 1
 
-                # Штраф для дитячих моделей, якщо запит не дитячий
                 if not is_kids:
                     if 'дитяч' in name_l or 'для дітей' in desc_l or 'game' in name_l:
                         score -= 10
 
-                # Врахування статі
                 if target_gender == "men" and ('чоловіч' in name_l or 'чоловіч' in desc_l):
                     score += 4
                 elif target_gender == "women" and ('жіноч' in name_l or 'жіноч' in desc_l):
@@ -258,10 +252,8 @@ def diverse_smart_search(user_query: str, limit: int = 3):
 
                 scored_list.append((score, item))
 
-            # Сортуємо: спочатку найвищий бал
             scored_list.sort(key=lambda x: x[0], reverse=True)
 
-            # Диверсифікація брендів: не більше 1 товару одного бренду
             selected = []
             seen_vendors = set()
 
@@ -294,38 +286,38 @@ def render_rozetka_card(p: dict) -> str:
         prod_url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(p['name'])}"
 
     img_src = p.get('image') or 'https://zorro.com.ua/content/images/no-image.png'
-    short_desc = p['description'][:95] + "..." if p.get('description') else "Оригінальний годинник із офіційною гарантією."
+    short_desc = p['description'][:100] + "..." if p.get('description') else "Оригінальний годинник із гарантією 12 міс."
     price_val = int(p['price']) if p.get('price') else 0
     brand_label = p.get('vendor') or 'ZORRO'
     safe_name = p['name'].replace('"', '&quot;')
 
     return f"""
-    <div style="box-sizing:border-box; width:100%; background:#f7f7f9; border:1px solid #e5e5ea; border-radius:12px; padding:10px; margin-top:8px; text-align:left;">
-      <div style="display:flex; gap:10px; align-items:center;">
+    <div style="box-sizing:border-box; width:100%; background:#ffffff; border:1px solid #e2e5e8; border-radius:12px; padding:12px; margin-top:10px; box-shadow:0 1px 4px rgba(0,0,0,0.06); text-align:left;">
+      <div style="display:flex; gap:12px; align-items:flex-start;">
         <a href="{prod_url}" target="_self" style="flex-shrink:0;">
-          <img src="{img_src}" alt="{safe_name}" style="width:60px; height:60px; object-fit:contain; border-radius:8px; background:#ffffff; border:1px solid #ebebeb;">
+          <img src="{img_src}" alt="{safe_name}" style="width:78px; height:78px; object-fit:contain; border-radius:8px; background:#f9fafb; border:1px solid #eee;">
         </a>
         <div style="flex:1; min-width:0;">
-          <div style="font-size:10px; text-transform:uppercase; color:#8e8e93; font-weight:700; letter-spacing:0.3px;">{brand_label}</div>
-          <a href="{prod_url}" target="_self" style="color:#111; text-decoration:none; font-weight:600; font-size:12px; line-height:1.25; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+          <div style="font-size:10.5px; text-transform:uppercase; color:#888; font-weight:700; letter-spacing:0.4px; margin-bottom:2px;">{brand_label}</div>
+          <a href="{prod_url}" target="_self" style="color:#222; text-decoration:none; font-weight:600; font-size:13.5px; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
             {p['name']}
           </a>
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px;">
-            <span style="font-size:14px; font-weight:700; color:#111;">{price_val} ₴</span>
-            <a href="{prod_url}" target="_self" style="background:#00a046; color:#ffffff; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:600; text-decoration:none; display:inline-block;">Купити</a>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px;">
+            <span style="font-size:16px; font-weight:700; color:#111;">{price_val} ₴</span>
+            <a href="{prod_url}" target="_self" style="background:#00a046; color:#ffffff; padding:5px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none; display:inline-block;">Купити</a>
           </div>
         </div>
       </div>
       
-      <div style="font-size:11px; color:#555; margin-top:6px; line-height:1.3; border-top:1px dashed #dcdce0; padding-top:5px;">
+      <div style="font-size:11.5px; color:#555; margin-top:8px; line-height:1.35; border-top:1px dashed #e5e5e5; padding-top:6px;">
         {short_desc}
       </div>
 
-      <div style="display:flex; gap:12px; margin-top:6px; padding-top:2px;">
-        <span class="ai-card-action" data-action="similar" data-name="{safe_name}" style="cursor:pointer; font-size:11px; color:#00a046; font-weight:500; display:flex; align-items:center; gap:3px;">
+      <div style="display:flex; gap:14px; margin-top:8px; padding-top:2px;">
+        <span class="ai-card-action" data-action="similar" data-name="{safe_name}" style="cursor:pointer; font-size:11.5px; color:#00a046; font-weight:500; display:flex; align-items:center; gap:4px;">
           🔍 Схожі товари
         </span>
-        <span class="ai-card-action" data-action="desc" data-name="{safe_name}" style="cursor:pointer; font-size:11px; color:#666; display:flex; align-items:center; gap:3px;">
+        <span class="ai-card-action" data-action="desc" data-name="{safe_name}" style="cursor:pointer; font-size:11.5px; color:#666; display:flex; align-items:center; gap:4px;">
           📄 Опис товару
         </span>
       </div>
@@ -389,18 +381,27 @@ async def chat(data: ChatRequest):
         catalog_context += f"• Модель: {p['name']} (Бренд: {p.get('vendor')}) | Ціна: {p['price']} грн | Опис: {short_desc}\n"
         cards_html.append(render_rozetka_card(p))
 
+    chips_html = """
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; padding-top:6px; border-top:1px solid #f0f0f0;">
+      <button class="ai-chip" data-msg="Розкажи детальніше опис та характеристики">📄 Опис товару</button>
+      <button class="ai-chip" data-msg="Порівняй ці моделі між собою">⚖️ Порівняти моделі</button>
+      <button class="ai-chip" data-msg="Покажи інші схожі варіанти">🔍 Схожі товари</button>
+      <button class="ai-chip" data-msg="Передзвоніть мені для оформлення замовлення">📞 Замовити дзвінок</button>
+    </div>
+    """
+
     system_instruction = f"""
     Ти — професійний онлайн-консультант магазину годинників ZORRO (zorro.com.ua).
-    Твоє завдання — вести діалог впевнено, ввічливо та допомагати зробити покупку.
+    Поточний товар на сторінці: {data.current_product or "каталог"}.
 
-    ПІДІБРАНІ ВАРІАНТИ З КАТАЛОГУ (РІЗНІ БРЕНДИ ДЛЯ ПОРІВНЯННЯ):
-    {catalog_context if catalog_context else "Точних моделей за цими критеріями не знайдено."}
+    ПІДІБРАНІ ТОВАРИ ДЛЯ ВІДПОВІДІ:
+    {catalog_context if catalog_context else "Точних збігів не знайдено."}
 
-    ОБОВ'ЯЗКОВІ ПРАВИЛА:
-    1. Починай свою відповідь із суті: підтвердь побажання клієнта і коротко (1-2 речення) поясни, чому саме ці підібрані моделі варті уваги.
-    2. В кінці відповіді ЗАВЖДИ став відкрите питання для продовження діалогу (наприклад: "Якому формату надаєте перевагу — більш спортивному чи класичному?", або "Чи потрібна допомога з оформленням замовлення?").
-    3. Не пиши ціни й посилання текстом — графічні картки додаються автоматично.
-    4. Спілкуйся виключно чистою українською мовою.
+    ПРАВИЛА:
+    1. Почни відповідь із поради покупцеві (1-2 лаконічні речення), чому ці варіанти підходять під його запит.
+    2. У тексті НЕ пиши ціни й посилання — великі картки Rozetka додаються системою нижче.
+    3. В кінці відповіді постав одне ввічливе відкрите питання для підтримки діалогу.
+    4. Мова — виключно українська.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
@@ -413,5 +414,6 @@ async def chat(data: ChatRequest):
     full_output = f"<div style='line-height:1.4;'>{ai_reply}</div>"
     if cards_html:
         full_output += "".join(cards_html)
+    full_output += chips_html
 
     return {"reply": full_output}
