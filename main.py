@@ -42,7 +42,7 @@ def get_db_connection():
     try:
         return psycopg2.connect(DATABASE_URL)
     except Exception as e:
-        print(f"Помилка підключення до БД: {e}")
+        print(f"Помилка БД: {e}")
         return None
 
 def init_db():
@@ -86,7 +86,7 @@ def sync_both_catalogs():
 
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    # 1. Завантажуємо фід Best Time для збору детальних характеристик
+    # 1. Завантаження структурованих параметрів з фіду Best Time
     besttime_data = {}
     try:
         res_bt = requests.get(BESTTIME_XML_URL, headers=headers, timeout=60)
@@ -111,17 +111,17 @@ def sync_both_catalogs():
                         val_l = p_val.lower()
                         name_l = p_name.lower()
 
-                        if 'дзвін' in val_l or 'виклики' in val_l or 'розмов' in val_l or 'sim' in val_l or 'сім' in val_l:
+                        if any(k in val_l for k in ['дзвін', 'виклики', 'розмов', 'sim', 'сім', 'телефон']):
                             has_calls = True
                         if 'водостійкість' in name_l:
                             waterproof = p_val
                         if 'матеріал ремінця' in name_l:
                             strap_mat = p_val
-                        if 'тип' in name_l or 'для чоловіків' in name_l or 'для жінок' in name_l:
+                        if any(k in name_l for k in ['тип', 'для чоловіків', 'для жінок']):
                             gender = p_val
 
                 desc_bt = (offer.findtext('description_ua') or offer.findtext('description') or '').lower()
-                if 'дзвінк' in desc_bt or 'розмов' in desc_bt or 'sim' in desc_bt or 'виклики' in desc_bt:
+                if any(k in desc_bt for k in ['дзвін', 'розмов', 'sim', 'виклики', 'мікрофон']):
                     has_calls = True
 
                 besttime_data[vcode] = {
@@ -132,18 +132,16 @@ def sync_both_catalogs():
                     "gender": gender
                 }
     except Exception as e:
-        print(f"Помилка Best Time XML: {e}")
+        print(f"Помилка парсингу Best Time XML: {e}")
 
-    # 2. Завантажуємо фід Zorro та об'єднуємо з даними Best Time
+    # 2. Завантаження каталогу ZORRO та об'єднання даних
     count = 0
     try:
         res_zorro = requests.get(ZORRO_XML_URL, headers=headers, timeout=60)
         res_zorro.raise_for_status()
         root_z = ET.fromstring(res_zorro.content)
         
-        offers = root_z.findall('.//offer')
-        if not offers:
-            offers = root_z.findall('.//item')
+        offers = root_z.findall('.//offer') or root_z.findall('.//item')
 
         with conn.cursor() as cur:
             for offer in offers:
@@ -172,7 +170,6 @@ def sync_both_catalogs():
                 pic = offer.find('picture') or offer.find('image')
                 image = pic.text.strip() if (pic is not None and pic.text) else ''
 
-                # Дані з Best Time за артикулом
                 bt_info = besttime_data.get(vcode, {})
                 params_txt = bt_info.get("params_text", "")
                 has_calls = bt_info.get("has_calls", False)
@@ -182,9 +179,9 @@ def sync_both_catalogs():
 
                 name_lower = name.lower()
                 desc_lower = desc.lower()
-                is_smart = 'smart' in name_lower or 'смарт' in name_lower or 'watch' in name_lower or 'смарт' in desc_lower
+                is_smart = any(k in name_lower or k in desc_lower for k in ['smart', 'смарт', 'watch'])
 
-                if 'дзвін' in desc_lower or 'виклики' in desc_lower or 'розмов' in desc_lower or 'sim' in desc_lower:
+                if any(k in desc_lower for k in ['дзвін', 'виклики', 'розмов', 'sim', 'блютуз']):
                     has_calls = True
 
                 if not vcode:
@@ -249,17 +246,16 @@ def accurate_catalog_search(user_query: str, limit: int = 3):
         return []
 
     parse_prompt = f"""
-    Проаналізуй запит покупця годинників ZORRO: "{user_query}"
-    Виділи параметри строго у форматі JSON:
+    Проаналізуй запит клієнта годинників ZORRO: "{user_query}"
+    Поверни строго чистий JSON:
     {{
-        "requires_calls": true/false (потрібні дзвінки, розмови, sim-карта або bluetooth-виклики),
+        "requires_calls": true/false (потрібні дзвінки, розмови, виклики, sim-карта),
         "only_smart": true/false (потрібен смарт-годинник),
-        "only_mechanical": true/false (потрібна механіка / автозавод / скелетон),
-        "waterproof": true/false (потрібен захист для плавання / басейну),
+        "only_mechanical": true/false (потрібна механіка або скелетон),
         "max_price": число або null,
         "is_kids": true/false,
         "gender": "men" | "women" | "kids" | null,
-        "search_terms": ["пошукові", "слова", "матеріали", "кольори"]
+        "search_terms": ["список", "ключових", "слів"]
     }}
     """
     ai_json = call_gemini(parse_prompt, temperature=0.1)
@@ -267,7 +263,6 @@ def accurate_catalog_search(user_query: str, limit: int = 3):
     requires_calls = False
     only_smart = False
     only_mechanical = False
-    waterproof_needed = False
     max_price = None
     is_kids = False
     gender = None
@@ -280,7 +275,6 @@ def accurate_catalog_search(user_query: str, limit: int = 3):
             requires_calls = parsed.get("requires_calls", False)
             only_smart = parsed.get("only_smart", False) or requires_calls
             only_mechanical = parsed.get("only_mechanical", False)
-            waterproof_needed = parsed.get("waterproof", False)
             max_price = parsed.get("max_price")
             is_kids = parsed.get("is_kids", False)
             gender = parsed.get("gender")
@@ -295,37 +289,59 @@ def accurate_catalog_search(user_query: str, limit: int = 3):
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT to_regclass('products_v2');")
+            v2_exists = cur.fetchone()['to_regclass'] is not None
+
+            table_name = "products_v2" if v2_exists else "products"
+
             where_clauses = ["image IS NOT NULL AND image != ''"]
             query_params = []
 
-            # Точний фільтр за функціями з двох XML
+            # ЖОРСТКЕ ОБМЕЖЕННЯ (Fail-closed)
             if requires_calls:
-                where_clauses.append("(has_calls = TRUE OR is_smart = TRUE)")
+                if v2_exists:
+                    where_clauses.append("(has_calls = TRUE OR is_smart = TRUE)")
+                else:
+                    where_clauses.append("(LOWER(name) LIKE '%smart%' OR LOWER(name) LIKE '%смарт%')")
             elif only_smart:
-                where_clauses.append("is_smart = TRUE")
+                if v2_exists:
+                    where_clauses.append("is_smart = TRUE")
+                else:
+                    where_clauses.append("(LOWER(name) LIKE '%smart%' OR LOWER(name) LIKE '%смарт%')")
             elif only_mechanical:
-                where_clauses.append("(LOWER(name) LIKE '%механ%' OR LOWER(description) LIKE '%механ%' OR LOWER(params_text) LIKE '%механіч%')")
+                where_clauses.append("(LOWER(name) LIKE '%механ%' OR LOWER(description) LIKE '%механ%')")
 
             if max_price:
                 where_clauses.append("price <= %s")
                 query_params.append(float(max_price))
 
             where_str = " AND ".join(where_clauses)
-            sql = f"""
-                SELECT vendor_code, name, price, vendor, description, url, image,
-                       params_text, has_calls, is_smart, waterproof, strap_material
-                FROM products_v2
-                WHERE {where_str}
-                ORDER BY price DESC
-                LIMIT 80;
-            """
+            
+            if v2_exists:
+                sql = f"""
+                    SELECT vendor_code, name, price, vendor, description, url, image,
+                           params_text, has_calls, is_smart
+                    FROM products_v2
+                    WHERE {where_str}
+                    ORDER BY has_calls DESC, price DESC
+                    LIMIT 50;
+                """
+            else:
+                sql = f"""
+                    SELECT vendor_code, name, price, vendor, description, url, image,
+                           '' as params_text, FALSE as has_calls, TRUE as is_smart
+                    FROM products
+                    WHERE {where_str}
+                    ORDER BY price DESC
+                    LIMIT 50;
+                """
+
             cur.execute(sql, tuple(query_params))
             candidates = cur.fetchall()
 
-            # Якщо строгий фільтр дав порожнечу (наприклад, ще не встигли синхронізувати v2), шукаємо в старій таблиці products
             if not candidates:
-                cur.execute("SELECT vendor_code, name, price, vendor, description, url, image FROM products WHERE image != '' ORDER BY price DESC LIMIT 40;")
-                candidates = cur.fetchall()
+                conn.close()
+                return []
 
             scored = []
             for item in candidates:
@@ -348,17 +364,12 @@ def accurate_catalog_search(user_query: str, limit: int = 3):
 
                 if requires_calls:
                     if item.get('has_calls'):
-                        score += 12
+                        score += 15
                     if 'smart' in name_l:
                         score += 5
 
-                if waterproof_needed:
-                    if 'плавання' in params_l or '5 атм' in params_l or '10 атм' in params_l:
-                        score += 8
-
-                if not is_kids:
-                    if 'дитяч' in name_l or 'game' in name_l or 'для дітей' in desc_l:
-                        score -= 15
+                if not is_kids and ('дитяч' in name_l or 'game' in name_l or 'для дітей' in desc_l):
+                    score -= 20
 
                 if gender == "men" and ('чоловіч' in name_l or 'чоловіч' in params_l):
                     score += 4
@@ -369,24 +380,8 @@ def accurate_catalog_search(user_query: str, limit: int = 3):
 
             scored.sort(key=lambda x: x[0], reverse=True)
 
-            # Диверсифікація брендів у межах знайденої категорії
-            selected = []
-            seen_vendors = set()
-
-            for score, item in scored:
-                v = (item.get('vendor') or 'zorro').lower().strip()
-                if v not in seen_vendors:
-                    selected.append(item)
-                    seen_vendors.add(v)
-                if len(selected) >= limit:
-                    break
-
-            if len(selected) < limit:
-                for score, item in scored:
-                    if item not in selected:
-                        selected.append(item)
-                    if len(selected) >= limit:
-                        break
+            # Беремо виключно ті моделі, які пройшли жорстку фільтрацію
+            selected = [item for score, item in scored[:limit]]
 
             conn.close()
             return selected
@@ -403,7 +398,6 @@ def render_rozetka_card(p: dict) -> str:
 
     img_src = p.get('image') or 'https://zorro.com.ua/content/images/no-image.png'
     
-    # Використовуємо точні параметри, якщо вони є, або опис
     params_info = p.get('params_text')
     if params_info and len(params_info) > 10:
         clean_params = params_info.split(' | ')[:3]
@@ -490,7 +484,7 @@ async def callback(data: CallbackRequest):
     send_telegram_notification(data.phone, data.message)
     return {
         "status": "success", 
-        "reply": f"Дякуємо! Номер {data.phone} успішно передано менеджеру. Ми зателефонуємо вам протягом 10 хвилин для консультації!"
+        "reply": f"Дякуємо! Номер {data.phone} передано черговому менеджеру. Очікуйте дзвінка протягом кількох хвилин!"
     }
 
 @app.post("/api/chat")
@@ -515,16 +509,17 @@ async def chat(data: ChatRequest):
 
     system_instruction = f"""
     Ти — професійний онлайн-консультант магазину годинників ZORRO (zorro.com.ua).
-    Поточний товар на сторінці (якщо є): {data.current_product or "каталог"}.
+    Поточний товар на сторінці: {data.current_product or "каталог"}.
 
     ПІДІБРАНІ ВАРІАНТИ З БАЗИ З ПОВНИМИ ХАРАКТЕРИСТИКАМИ:
     {catalog_context if catalog_context else "Точних моделей за цими критеріями не знайдено."}
 
     СУВОРІ ПРАВИЛА:
-    1. Якщо запит про дзвінки, смарт-годинники чи виклики — рекомендуй ТІЛЬКИ смарт-моделі зі зв'язком. Не пропонуй класичну механіку!
-    2. У тексті відповіді НЕ пиши ціни й посилання — вони автоматично виводяться у картках нижче.
-    3. Поясни коротко (1-2 речення) переваги підібраних моделей і заверши діалог відкритим запитанням покупцеві.
-    4. Мова спілкування — виключно українська.
+    1. Якщо клієнт шукає зв'язок/дзвінки/смарт-функції — говори ТІЛЬКИ про ці можливості.
+    2. Якщо товарів за критерієм немає — відверто поясни це й запропонуй допомогу менеджера або інші смарт-моделі. Жодної механіки у відповідях про дзвінки бути не може!
+    3. У тексті відповіді НЕ дублюй ціни та посилання — вони вже виведені в картках.
+    4. 1-2 лаконічні речення переваг і в кінці одне відкрите запитання.
+    5. Мова спілкування — українська.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
