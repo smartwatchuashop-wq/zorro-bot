@@ -167,22 +167,19 @@ def call_gemini(prompt_text: str, system_instruction: str = "", temperature: flo
     return ""
 
 def diverse_smart_search(user_query: str, limit: int = 3):
-    """
-    Розумний пошук із гарантованою диверсифікацією брендів та відсіканням дитячого спаму.
-    """
     conn = get_db_connection()
     if not conn:
         return []
 
     parse_prompt = f"""
     Проаналізуй запит покупця годинників ZORRO: "{user_query}"
-    Виділи параметри строго у форматі JSON (чистий JSON):
+    Виділи параметри строго у форматі JSON:
     {{
         "max_price": число або null,
         "min_price": число або null,
-        "is_kids": true/false (тільки якщо явно запитують для дитини),
+        "is_kids": true/false,
         "target_gender": "men" | "women" | "kids" | "unisex" | null,
-        "keywords": ["ключові", "ознаки", "стиль", "функції", "матеріали"]
+        "keywords": ["масив", "пошукових", "слів", "характеристик"]
     }}
     """
     ai_json = call_gemini(parse_prompt, temperature=0.1)
@@ -214,9 +211,10 @@ def diverse_smart_search(user_query: str, limit: int = 3):
         score_parts = []
         params = []
 
+        # 1. Підрахунок релевантності за ключовими словами
         for kw in keywords[:6]:
             p = f"%{kw.lower()}%"
-            score_parts.append(f"""
+            score_parts.append("""
                 (CASE 
                     WHEN LOWER(name) LIKE %s THEN 4
                     WHEN LOWER(vendor) LIKE %s THEN 3
@@ -226,11 +224,11 @@ def diverse_smart_search(user_query: str, limit: int = 3):
             """)
             params.extend([p, p, p])
 
-        # Фільтрація статі/віку
+        # 2. Фільтр дорослий/дитячий (без плейсхолдерів, вшиті літерали)
         if not is_kids:
             score_parts.append("""
                 (CASE 
-                    WHEN LOWER(name) LIKE '%дитяч%' OR LOWER(description) LIKE '%для дітей%' OR LOWER(name) LIKE '%game%' THEN -8 
+                    WHEN LOWER(name) LIKE '%дитяч%' OR LOWER(description) LIKE '%для дітей%' OR LOWER(name) LIKE '%game%' THEN -10 
                     ELSE 0 
                 END)
             """)
@@ -252,7 +250,6 @@ def diverse_smart_search(user_query: str, limit: int = 3):
 
         where_sql = "WHERE " + " AND ".join(where_clauses)
 
-        # Витягуємо топ кандидатів із високим балом
         sql = f"""
             SELECT vendor_code, name, price, vendor, description, url, image,
                    ({score_sql}) AS match_score
@@ -264,20 +261,18 @@ def diverse_smart_search(user_query: str, limit: int = 3):
         cur.execute(sql, tuple(params))
         all_candidates = cur.fetchall()
 
-        # ДИВЕРСИФІКАЦІЯ: не більше 1 товару від одного бренду, щоб показати вибір
+        # Диверсифікація брендів: не показуємо підряд один і той самий бренд
         selected = []
         seen_vendors = set()
 
         for prod in all_candidates:
             vendor = (prod.get('vendor') or 'unknown').lower().strip()
-            # Якщо бренд ще не показували — додаємо
             if vendor not in seen_vendors:
                 selected.append(prod)
                 seen_vendors.add(vendor)
             if len(selected) >= limit:
                 break
 
-        # Якщо не набралося limit через різні бренди, добираємо наступні найкращі
         if len(selected) < limit:
             for prod in all_candidates:
                 if prod not in selected:
@@ -289,7 +284,6 @@ def diverse_smart_search(user_query: str, limit: int = 3):
     return selected
 
 def render_rozetka_card(p: dict) -> str:
-    """Генерує картку у стилі Rozetka: сірий м'який фон, компактність, фірмові посилання"""
     prod_url = (p.get('url') or '').strip()
     if not prod_url or prod_url.rstrip('/') == 'https://zorro.com.ua':
         prod_url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(p['name'])}"
