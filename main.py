@@ -166,98 +166,126 @@ def call_gemini(prompt_text: str, system_instruction: str = "", temperature: flo
                 continue
     return ""
 
-def diverse_smart_search(user_query: str, limit: int = 3):
+def strict_semantic_search(user_query: str, limit: int = 3):
+    """
+    Семантичний розбір з суворою фільтрацією специфічних вимог (дзвінки, смарт, механіка, стать, бюджет).
+    """
     conn = get_db_connection()
     if not conn:
         return []
 
     parse_prompt = f"""
-    Проаналізуй запит покупця інтернет-магазину годинників: "{user_query}"
-    Виділи параметри строго у форматі JSON (тільки чистий JSON без коментарів):
+    Проаналізуй запит покупця годинників ZORRO: "{user_query}"
+    Поверни строгий JSON (чистий JSON без коментарів):
     {{
+        "requires_calls": true/false (якщо клієнту потрібні дзвінки, розмови, bluetooth-виклик чи sim-карта),
+        "only_smart": true/false (якщо запитують виключно смарт-годинники),
+        "only_mechanical": true/false (якщо хочуть виключно механіку),
         "max_price": число або null,
         "is_kids": true/false,
-        "target_gender": "men" | "women" | "kids" | "unisex" | null,
-        "search_words": ["список", "ключових", "слів"]
+        "gender": "men" | "women" | "kids" | null,
+        "search_keywords": ["список", "основних", "слів"]
     }}
     """
     ai_json = call_gemini(parse_prompt, temperature=0.1)
-    
+
+    requires_calls = False
+    only_smart = False
+    only_mechanical = False
     max_price = None
     is_kids = False
-    target_gender = None
-    search_words = []
+    gender = None
+    search_keywords = []
 
     try:
         match = re.search(r'\{.*\}', ai_json, re.DOTALL)
         if match:
             parsed = json.loads(match.group(0))
+            requires_calls = parsed.get("requires_calls", False)
+            only_smart = parsed.get("only_smart", False) or requires_calls
+            only_mechanical = parsed.get("only_mechanical", False)
             max_price = parsed.get("max_price")
             is_kids = parsed.get("is_kids", False)
-            target_gender = parsed.get("target_gender")
-            search_words = parsed.get("search_words") or []
+            gender = parsed.get("gender")
+            search_keywords = parsed.get("search_keywords") or []
     except Exception:
         pass
 
-    if not search_words:
-        clean_words = re.findall(r'\w+', user_query.lower())
-        stop_words = {"годинник", "годинники", "порадь", "хочу", "який", "які", "підкажи", "купити", "цікаві", "моделі", "надійні"}
-        search_words = [w for w in clean_words if len(w) > 2 and w not in stop_words]
+    if not search_keywords:
+        words = re.findall(r'\w+', user_query.lower())
+        stop_words = {"годинник", "годинники", "які", "який", "порадь", "хочу", "підкажи", "моделі"}
+        search_keywords = [w for w in words if len(w) > 2 and w not in stop_words]
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            where_clauses = ["image IS NOT NULL AND image != ''"]
-            query_params = []
+            # Витягуємо товари тільки з наявними фотографіями
+            where_sql = ["image IS NOT NULL AND image != ''"]
+            sql_params = []
+
+            # 1. ЖОРСТКИЙ ФІЛЬТР: якщо потрібні дзвінки — відсікаємо все, крім моделей з підтримкою дзвінків
+            if requires_calls:
+                where_sql.append("""(
+                    (LOWER(description) LIKE '%дзвін%' OR LOWER(description) LIKE '%розмов%' OR LOWER(description) LIKE '%виклики%' OR LOWER(description) LIKE '%мікрофон%' OR LOWER(description) LIKE '%блютуз%' OR LOWER(description) LIKE '%bluetooth%')
+                    AND (LOWER(name) LIKE '%smart%' OR LOWER(name) LIKE '%смарт%' OR LOWER(description) LIKE '%smart%' OR LOWER(description) LIKE '%смарт%')
+                )""")
+            elif only_smart:
+                where_sql.append("(LOWER(name) LIKE '%smart%' OR LOWER(name) LIKE '%смарт%' OR LOWER(description) LIKE '%смарт%')")
+            elif only_mechanical:
+                where_sql.append("(LOWER(name) LIKE '%механ%' OR LOWER(name) LIKE '%skeleton%' OR LOWER(description) LIKE '%механ%')")
 
             if max_price:
-                where_clauses.append("price <= %s")
-                query_params.append(float(max_price))
+                where_sql.append("price <= %s")
+                sql_params.append(float(max_price))
 
-            where_str = " AND ".join(where_clauses)
-            
-            sql = f"""
-                SELECT vendor_code, name, price, vendor, description, url, image
-                FROM products
-                WHERE {where_str}
-                ORDER BY price DESC
-                LIMIT 60;
-            """
-            cur.execute(sql, tuple(query_params))
+            final_where = "WHERE " + " AND ".join(where_sql)
+
+            # Беремо кандидатів
+            cur.execute(f"SELECT vendor_code, name, price, vendor, description, url, image FROM products {final_where} ORDER BY price DESC LIMIT 80;", tuple(sql_params))
             candidates = cur.fetchall()
 
-            scored_list = []
+            # Якщо жорсткий фільтр не дав результатів (наприклад, фід не має слова "дзвінки" в описі), шукаємо кращі смарт-моделі
+            if not candidates and (requires_calls or only_smart):
+                cur.execute("SELECT vendor_code, name, price, vendor, description, url, image FROM products WHERE (LOWER(name) LIKE '%smart%' OR LOWER(name) LIKE '%смарт%') AND image != '' ORDER BY price DESC LIMIT 40;")
+                candidates = cur.fetchall()
+
+            # Ранжуємо в Python за релевантністю
+            scored = []
             for item in candidates:
                 name_l = (item['name'] or '').lower()
                 desc_l = (item['description'] or '').lower()
                 vend_l = (item['vendor'] or '').lower()
                 score = 0
 
-                for word in search_words:
-                    w = word.lower()
-                    if w in name_l:
-                        score += 5
-                    if w in vend_l:
+                for kw in search_keywords:
+                    k = kw.lower()
+                    if k in name_l:
+                        score += 6
+                    if k in vend_l:
                         score += 3
-                    if w in desc_l:
-                        score += 1
+                    if k in desc_l:
+                        score += 2
 
-                if not is_kids:
-                    if 'дитяч' in name_l or 'для дітей' in desc_l or 'game' in name_l:
-                        score -= 10
+                if requires_calls:
+                    if 'дзвін' in desc_l or 'виклики' in desc_l or 'розмов' in desc_l:
+                        score += 10
 
-                if target_gender == "men" and ('чоловіч' in name_l or 'чоловіч' in desc_l):
+                if not is_kids and ('дитяч' in name_l or 'game' in name_l or 'для дітей' in desc_l):
+                    score -= 15
+
+                if gender == "men" and ('чоловіч' in name_l or 'чоловіч' in desc_l):
                     score += 4
-                elif target_gender == "women" and ('жіноч' in name_l or 'жіноч' in desc_l):
+                elif gender == "women" and ('жіноч' in name_l or 'жіноч' in desc_l):
                     score += 4
 
-                scored_list.append((score, item))
+                scored.append((score, item))
 
-            scored_list.sort(key=lambda x: x[0], reverse=True)
+            scored.sort(key=lambda x: x[0], reverse=True)
 
+            # Диверсифікація брендів ТІЛЬКИ СЕРЕД РЕЛЕВАНТНИХ товарів
             selected = []
             seen_vendors = set()
 
-            for score, item in scored_list:
+            for score, item in scored:
                 v = (item.get('vendor') or 'zorro').lower().strip()
                 if v not in seen_vendors:
                     selected.append(item)
@@ -265,8 +293,9 @@ def diverse_smart_search(user_query: str, limit: int = 3):
                 if len(selected) >= limit:
                     break
 
+            # Якщо різних брендів не вистачило — добираємо моделі того ж бренду (наприклад, інші смарт UWatch), але не механіку!
             if len(selected) < limit:
-                for score, item in scored_list:
+                for score, item in scored:
                     if item not in selected:
                         selected.append(item)
                     if len(selected) >= limit:
@@ -286,7 +315,7 @@ def render_rozetka_card(p: dict) -> str:
         prod_url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(p['name'])}"
 
     img_src = p.get('image') or 'https://zorro.com.ua/content/images/no-image.png'
-    short_desc = p['description'][:100] + "..." if p.get('description') else "Оригінальний годинник із гарантією 12 міс."
+    short_desc = p['description'][:110] + "..." if p.get('description') else "Оригінальний годинник з офіційною гарантією 12 місяців."
     price_val = int(p['price']) if p.get('price') else 0
     brand_label = p.get('vendor') or 'ZORRO'
     safe_name = p['name'].replace('"', '&quot;')
@@ -327,9 +356,9 @@ def render_rozetka_card(p: dict) -> str:
 def send_telegram_notification(phone: str, message: str = ""):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
-    text = f"📞 <b>НОВА ЗАЯВКА З ЧАТУ ZORRO!</b>\n\n<b>Телефон:</b> <code>{phone}</code>"
+    text = f"📞 <b>ЗАМОВЛЕННЯ ДЗВІНКА З ЧАТУ ZORRO!</b>\n\n<b>Номер покупця:</b> <code>{phone}</code>"
     if message:
-        text += f"\n<b>Діалог:</b> {message}"
+        text += f"\n<b>Запит або товар:</b> {message}"
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
     try:
@@ -362,31 +391,30 @@ def sync_catalog():
 @app.post("/api/callback")
 async def callback(data: CallbackRequest):
     if not data.phone:
-        return {"status": "error", "reply": "Будь ласка, вкажіть ваш номер телефону."}
+        return {"status": "error", "reply": "Будь ласка, введіть номер телефону."}
     send_telegram_notification(data.phone, data.message)
     return {
         "status": "success", 
-        "reply": "Дякуємо! Номер збережено, наш консультант зателефонує вам найближчим часом. Яку саме модель для вас зарезервувати?"
+        "reply": f"Дякуємо! Номер {data.phone} успішно передано менеджеру. Ми зателефонуємо вам протягом 10 хвилин для консультації!"
     }
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
-    matched_products = diverse_smart_search(data.message, limit=3)
+    matched_products = strict_semantic_search(data.message, limit=3)
     
     catalog_context = ""
     cards_html = []
     
     for p in matched_products:
-        short_desc = p['description'][:95] + "..." if p.get('description') else "Оригінальний годинник."
+        short_desc = p['description'][:100] + "..." if p.get('description') else "Оригінальний годинник."
         catalog_context += f"• Модель: {p['name']} (Бренд: {p.get('vendor')}) | Ціна: {p['price']} грн | Опис: {short_desc}\n"
         cards_html.append(render_rozetka_card(p))
 
     chips_html = """
     <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; padding-top:6px; border-top:1px solid #f0f0f0;">
-      <button class="ai-chip" data-msg="Розкажи детальніше опис та характеристики">📄 Опис товару</button>
-      <button class="ai-chip" data-msg="Порівняй ці моделі між собою">⚖️ Порівняти моделі</button>
-      <button class="ai-chip" data-msg="Покажи інші схожі варіанти">🔍 Схожі товари</button>
-      <button class="ai-chip" data-msg="Передзвоніть мені для оформлення замовлення">📞 Замовити дзвінок</button>
+      <button class="ai-chip" data-msg="Розкажи детальніше опис та характеристики цих моделей">📄 Опис моделей</button>
+      <button class="ai-chip" data-msg="Порівняй ці моделі між собою: автономність та захист">⚖️ Порівняти моделі</button>
+      <button class="ai-chip" data-action="call-modal" style="background:#00a046; color:#fff; border-color:#00a046; font-weight:600;">📞 Замовити дзвінок менеджера</button>
     </div>
     """
 
@@ -394,21 +422,22 @@ async def chat(data: ChatRequest):
     Ти — професійний онлайн-консультант магазину годинників ZORRO (zorro.com.ua).
     Поточний товар на сторінці: {data.current_product or "каталог"}.
 
-    ПІДІБРАНІ ТОВАРИ ДЛЯ ВІДПОВІДІ:
+    ПІДІБРАНІ ВАРІАНТИ З КАТАЛОГУ:
     {catalog_context if catalog_context else "Точних збігів не знайдено."}
 
-    ПРАВИЛА:
-    1. Почни відповідь із поради покупцеві (1-2 лаконічні речення), чому ці варіанти підходять під його запит.
-    2. У тексті НЕ пиши ціни й посилання — великі картки Rozetka додаються системою нижче.
-    3. В кінці відповіді постав одне ввічливе відкрите питання для підтримки діалогу.
-    4. Мова — виключно українська.
+    СУВОРІ ПРАВИЛА:
+    1. Якщо запит стосується функції дзвінків, смарт-годинників чи зв'язку — консультуй ВИКЛЮЧНО щодо цих можливостей. Не пропонуй класику чи механіку, якщо клієнт шукає зв'язок!
+    2. У тексті відповіді НЕ пиши ціни, назви та посилання — великі графічні картки додаються автоматично нижче.
+    3. Поясни у 1–2 лаконічних реченнях, чим зручні ці моделі для дзвінків та що вони вміють.
+    4. В кінці відповіді постав відкрите коротке питання: наприклад, чи важливий розмір екрана або захист від води.
+    5. Мова спілкування — виключно українська.
     """
 
     history_formatted = [{"role": m.role, "content": m.content} for m in data.history] if data.history else []
     ai_reply = call_gemini(
         prompt_text=f"Запит клієнта: {data.message}\nІсторія: {json.dumps(history_formatted, ensure_ascii=False)}",
         system_instruction=system_instruction,
-        temperature=0.3
+        temperature=0.2
     )
 
     full_output = f"<div style='line-height:1.4;'>{ai_reply}</div>"
