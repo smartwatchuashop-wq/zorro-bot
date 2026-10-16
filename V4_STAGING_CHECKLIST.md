@@ -45,6 +45,11 @@ Render currently allows only one active free-tier PostgreSQL database in this wo
 - `ZORRO_USE_EXISTING_DB_READ_ONLY=1`
 - `ZORRO_STAGING_SYNC_ENABLED=0` (MANDATORY)
 - `GEMINI_API_KEY=<key entered via Render secrets, if AI language-generation tests are needed>`
+- `ZORRO_STAGING_ACCESS_TOKEN=<secret with at least 24 characters, generated and stored only in Render>`
+- All staging API routes except `/` and `/api/staging-status` require the `X-Zorro-Staging-Token` HTTP header with that token. Without a token or DB, they fail closed. Do not expose this secret in public page JavaScript or GitHub.
+- Newly created service: [zorro-ai-v4-staging](https://dashboard.render.com/web/srv-db8qfvmi0phs738lg680). Initially deployed with `ZORRO_STAGING_SETUP_MODE=1`, no `DATABASE_URL` or Gemini secrets, and `autoDeploy=no`. Only activate read-only mode after adding the real private database URL, exact hostname and access secret to the **staging service only**.
+- After verifying read-only access, the secret header can be used in private test requests; do not enable public widget access until a safer authenticated test flow exists.
+
 
 In this mode: a) startup refuses another database name, mismatched host, or enabled sync; b) the production background catalog writer is replaced; c) all database connections opened through the API are marked `readonly=True` by psycopg2 before any SQL is executed; d) Telegram callbacks are disabled. GitHub Actions tests assert these guarantees and validate that PostgreSQL rejects attempted writes from a read-only session.
 
