@@ -280,7 +280,7 @@
       callbackSubmitBtn.disabled=true;
       var context=pageProduct ? 'Переглядає товар: ' + pageProduct.title : 'Замовлення консультації з чату';
       requestJson(API_BASE + '/api/callback',{phone:phone,message:context}).then(function(data){
-        addBotText(data && data.reply ? data.reply : 'Не вдалося відправити заявку.', true);
+        addBotText(data && data.reply ? data.reply : 'Не вдалося відправити заявку.', !(data && data.status === 'success'));
         if (data && data.status==='success') closeCallbackPanel();
       }).catch(function(){ addBotText('Помилка надсилання заявки. Спробуйте пізніше.',true); })
       .finally(function(){ callbackSubmitBtn.disabled=false; saveChatState(); });
