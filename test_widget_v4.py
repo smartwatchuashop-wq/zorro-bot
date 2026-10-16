@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 HTML = Path(__file__).with_name("zorro_widget_v4.html").read_text(encoding="utf-8")
-SCRIPT = re.search(r"<script>\\s*(.*?)\\s*</script>", HTML, re.S)
+SCRIPT = re.search(r"<script>\s*(.*?)\s*</script>", HTML, re.S)
 assert SCRIPT, "Widget must contain a JavaScript script section"
 JS = SCRIPT.group(1)
 
