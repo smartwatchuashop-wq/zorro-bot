@@ -88,9 +88,15 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
         if audience == "kids" and not any(x in corpus for x in ("дитяч", "діт", "детск")):
             continue
         typ = normalize(filters.get("watch_type"))
-        if typ == "smart" and not any(x in corpus for x in ("смарт", "smart", "розумн")):
+        # Explicit quartz/mechanical queries must not be satisfied by a smart
+        # watch that merely mentions a quartz/movement term in its description.
+        product_type = normalize(p.get("category")) + " " + normalize(p.get("name"))
+        is_smart = any(x in product_type for x in ("смарт", "smart", "розумн"))
+        if typ == "smart" and not is_smart:
             continue
         if typ in ("quartz", "mechanical"):
+            if is_smart:
+                continue
             aliases = ("кварц", "quartz") if typ == "quartz" else ("механ", "автозавод", "mechan")
             if not any(x in corpus for x in aliases):
                 continue
