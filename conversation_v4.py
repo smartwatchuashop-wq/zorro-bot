@@ -64,7 +64,7 @@ def handle_chat(data, connect, render_card, format_text):
     proposed=ai.get("filters") or {}
     if not isinstance(proposed, dict):
         proposed={}
-    allowed={"max_price","min_price","brand","category","sku","include","must_have","exclude"}
+    allowed={"max_price","min_price","brand","category","sku","include","must_have","exclude","audience","watch_type"}
     proposed={k:v for k,v in proposed.items() if k in allowed}
     # A new explicit search resets preferences unless it is a follow-up.
     if action=="search":
@@ -74,6 +74,15 @@ def handle_chat(data, connect, render_card, format_text):
             if k in ("exclude","must_have") and isinstance(v,dict):
                 filters[k]={**(filters.get(k) or {}),**v}
             else: filters[k]=v
+        # Deterministic safety net for explicit category/type requirements.
+        if re.search(r"чоловіч|для чоловік|для тата|для батька", message):
+            filters["audience"]="men"
+        elif re.search(r"жіноч|для жінк|для мами", message):
+            filters["audience"]="women"
+        elif re.search(r"дитяч|для дитини", message):
+            filters["audience"]="kids"
+        if re.search(r"смарт|smart|розумн\\w* годин", message):
+            filters["watch_type"]="smart"
         # Cheap deterministic safety net for budget if AI misses it.
         found=re.search(r"\bдо\s*(\d[\d ]*)\s*(?:грн|₴)?",message)
         if found: filters["max_price"]=int(found.group(1).replace(" ",""))
