@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import main
 import staging_main
+from fastapi.testclient import TestClient
 
 DB_URL = "postgresql://staging_user:dummy@zorro-staging-db.internal:5432/zorro_staging_db"
 CONF = {
@@ -57,6 +58,24 @@ class StagingSafetyTests(unittest.TestCase):
             thread.assert_called_once()
             self.assertIs(thread.call_args.kwargs["target"], main.worker)
             thread.return_value.start.assert_called_once()
+
+    def test_http_server_starts_read_only_with_confirmed_database(self):
+        with patch.dict(os.environ, CONF, clear=True), patch.object(staging_main.threading, "Thread") as thread:
+            with TestClient(staging_main.app) as client:
+                result = client.get("/api/staging-status")
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(result.json()["environment"], "staging")
+                self.assertFalse(result.json()["catalog_sync_enabled"])
+                self.assertFalse(result.json()["live_customer_notifications"])
+            thread.assert_not_called()
+
+    def test_http_server_refuses_production_database_before_startup(self):
+        unsafe = dict(CONF, DATABASE_URL="postgresql://prod:secret@prod.internal/zorro_products")
+        with patch.dict(os.environ, unsafe, clear=True), patch.object(staging_main.threading, "Thread") as thread:
+            with self.assertRaises(RuntimeError):
+                with TestClient(staging_main.app):
+                    pass
+            thread.assert_not_called()
 
     def test_staging_callback_cannot_send_real_message(self):
         self.assertFalse(main.send_telegram_notification("+380991234567", "test"))
