@@ -31,6 +31,21 @@ class ChatTests(unittest.TestCase):
         result,search,compare=self.run_chat("Порівняй перший і третій",state,{"action":"compare","filters":{}},0)
         self.assertEqual(compare.call_args.args[1],["101","303"])
         self.assertEqual(result["state"]["product_ids"],["101","202","303"])
+    def test_description_card_targets_named_watch_not_all_cards(self):
+        state={"filters":{"max_price":2000},"product_ids":["101","202","303"]}
+        result,search,compare=self.run_chat(
+            "Розкажи детальніше характеристики та опис Watch 303",
+            state,{"action":"search","filters":{}},0)
+        self.assertEqual([p["id"] for p in result["products"]],["303"])
+        self.assertEqual(result["state"]["product_ids"],["101","202","303"])
+        self.assertEqual(compare.call_count,1)
+
+    def test_ambiguous_description_requests_product_name(self):
+        state={"filters":{"max_price":2000},"product_ids":["101","202","303"]}
+        result,_,_=self.run_chat("Розкажи детальніше характеристики",state,{"action":"describe","filters":{}},0)
+        self.assertIn("Про яку саме модель",result["reply"])
+        self.assertNotIn("products",result)
+
     def test_explicit_new_budget(self):
         state={"filters":{"max_price":2000},"product_ids":[]}
         _,search,_=self.run_chat("А до 1700 грн?",state,{"action":"search","followup":True,"filters":{}},1)
