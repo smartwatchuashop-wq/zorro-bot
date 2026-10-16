@@ -101,6 +101,24 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("LOWER(category) LIKE LOWER(%s)",db.cur.sql)
         self.assertIn("%Чоловічі%",db.cur.args)
 
+    def test_calling_not_supported_must_not_match_yes(self):
+        p=watch("1","Smart Calling")
+        p["attributes"]["Можливість розмовляти"]="Ні"
+        found=search_products(DB([p]),{"must_have":{"Можливість розмовляти":"Так"}})
+        self.assertEqual(found,[])
+
+    def test_calling_explicitly_supported_matches_yes(self):
+        p=watch("1","Smart Calling")
+        p["attributes"]["Можливість розмовляти"]="Так"
+        found=search_products(DB([p]),{"must_have":{"Можливість розмовляти":"Так"}})
+        self.assertEqual([x["site_id"] for x in found],["1"])
+
+    def test_empty_or_negative_required_attribute_rejected(self):
+        p=watch("1","No material")
+        p["attributes"]["Матеріал ремінця"]="Немає"
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Немає"}})
+        self.assertEqual(found,[])
+
     def test_unknown_filter_rejected(self):
         with self.assertRaises(ValueError):
             search_products(DB([]),{"unsafe_sql":"DROP TABLE"})
