@@ -1,7 +1,7 @@
 """Zorro v4 conversation controller. Uses existing SQL retrieval; no production mutations."""
 import json, logging, os, re, requests
 from psycopg2.extras import RealDictCursor
-from search_v4 import search_products, compare_by_ids
+from search_v4 import search_products, compare_by_ids, normalize
 LOG=logging.getLogger("zorro.v4")
 MODEL=os.getenv("GEMINI_MODEL","gemini-2.5-flash")
 HARD={"max_price","min_price","brand","category","sku","must_have","exclude"}
@@ -59,6 +59,8 @@ def handle_chat(data, connect, render_card, format_text):
         action="compare"
     if any(t in message for t in ("доставка","оплата","повернен","гарантія","контакт")):
         action="question"
+    elif "розкажи" in message and any(t in message for t in ("характеристик", "опис", "детальніше")):
+        action="describe"
     ids=[str(x) for x in state.get("product_ids",[])][:10]
     filters=dict(state.get("filters") or {})
     proposed=ai.get("filters") or {}
@@ -128,6 +130,20 @@ def handle_chat(data, connect, render_card, format_text):
             products=search_products(conn,filters,limit=3)
     finally:
         conn.close()
+    if action=="describe" and products:
+        # A card's "Опис товару" must describe THAT card, not the entire
+        # previous shortlist. Never invent a match from an unknown name.
+        named=[p for p in products if normalize(p.get("name")) in message]
+        if named:
+            products=named[:1]
+        else:
+            index = (0 if "перш" in message else
+                     1 if "друг" in message else
+                     2 if "трет" in message else None)
+            if index is not None and index < len(products):
+                products=[products[index]]
+            elif len(products)!=1:
+                return {"reply":"Про яку саме модель із показаних годинників розповісти? Напишіть назву або номер у списку.","state":state}
     if action in ("compare","describe") and not ids:
         return {"reply":"Спочатку підберімо моделі, які ви хочете порівняти. Який бюджет і які функції важливі?","state":state}
     if not products:
