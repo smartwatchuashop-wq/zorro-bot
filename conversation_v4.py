@@ -89,6 +89,17 @@ def handle_chat(data, connect, render_card, format_text):
     # If Gemini fails, do not silently invent an unconstrained catalog recommendation.
     if not ai and action=="search" and not filters and not proposed:
         return {"reply":"Уточніть, будь ласка, тип годинника, бажаний бюджет або важливі функції — і я підберу за перевіреними характеристиками.","state":state}
+    # Accept numeric prices only: avoid PostgreSQL errors on Gemini strings like "2000 грн".
+    for price_key in ("max_price", "min_price"):
+        if price_key in filters:
+            candidate=filters[price_key]
+            try:
+                numeric=int(candidate) if not isinstance(candidate,bool) else -1
+            except (TypeError, ValueError, OverflowError):
+                numeric=-1
+            if numeric < 0 or numeric > 10000000:
+                return {"reply":"Уточніть бюджет числом у гривнях, будь ласка.","state":state}
+            filters[price_key]=numeric
     # Reuse the existing selection for comparison, including ordinal references.
     if action=="compare" and ids:
         if re.search(r"перш\w*\s+(?:і|та)\s+трет",message) and len(ids)>=3:
