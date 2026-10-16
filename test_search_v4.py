@@ -98,8 +98,8 @@ class RetrievalTests(unittest.TestCase):
     def test_category_filter_parameterized(self):
         db=DB([])
         search_products(db,{"category":"Чоловічі"})
-        self.assertIn("LOWER(category) LIKE LOWER(%s)",db.cur.sql)
-        self.assertIn("%Чоловічі%",db.cur.args)
+        self.assertIn("category = %s",db.cur.sql)
+        self.assertIn("Чоловічі годинники",db.cur.args)
 
     def test_calling_not_supported_must_not_match_yes(self):
         p=watch("1","Smart Calling")
