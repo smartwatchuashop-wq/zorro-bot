@@ -26,6 +26,29 @@ class ChatTests(unittest.TestCase):
         result,search,_=self.run_chat("А є зі сталевим браслетом?",state,{"action":"search","followup":False,"filters":{"must_have":{"Матеріал ремінця":"Сталевий"}}},1)
         self.assertEqual(search.call_args.args[1]["max_price"],2000)
         self.assertEqual(search.call_args.args[1]["audience"],"men")
+    def test_followup_normalizes_mens_category_alias(self):
+        state={"filters":{"max_price":2000,"category":"Чоловічі годинники",
+                          "audience":"men"},"product_ids":["101","202","303"]}
+        ai={"action":"search","followup":True,
+            "filters":{"max_price":2000,"category":"Чоловічий годинник",
+                       "exclude":{"Матеріал ремінця":["Шкіряний"]}}}
+        result,search,_=self.run_chat("А без шкіряного ремінця?",state,ai,1)
+        used=search.call_args.args[1]
+        self.assertEqual(used["category"],"Чоловічі годинники")
+        self.assertEqual(result["state"]["filters"]["category"],"Чоловічі годинники")
+        self.assertEqual(used["max_price"],2000)
+        self.assertEqual(used["exclude"]["Матеріал ремінця"],["Шкіряний"])
+
+    def test_smart_category_without_space_normalized(self):
+        ai={"action":"search","filters":{"category":"Смартгодинники",
+               "must_have":{"Можливість розмовляти":"Так"}}}
+        result,search,_=self.run_chat("Смарт годинник з дзвінками до 2000 грн",{},ai,1)
+        used=search.call_args.args[1]
+        self.assertEqual(used["category"],"Смарт годинники")
+        self.assertEqual(used["watch_type"],"smart")
+        self.assertEqual(used["max_price"],2000)
+        self.assertEqual(used["must_have"]["Можливість розмовляти"],"Так")
+
     def test_compare_exact_two_items(self):
         state={"filters":{"max_price":2000},"product_ids":["101","202","303"]}
         result,search,compare=self.run_chat("Порівняй перший і третій",state,{"action":"compare","filters":{}},0)
