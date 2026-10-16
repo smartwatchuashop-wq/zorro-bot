@@ -37,9 +37,9 @@ class PgIntegrationTests(unittest.TestCase):
                      "https://zorro.com.ua/cas",{"Матеріал ремінця":"Сталь","Тип механізму":"Кварцовий"}),
                     ("102","SK-2","Skmei Classic Чоловічий","Skmei","Чоловічі годинники",1299,True,
                      "https://zorro.com.ua/sk",{"Матеріал ремінця":"Шкіряний","Тип механізму":"Кварцовий"}),
-                    ("103","SW-3","Smart Watch Чоловічий","Skmei","Смарт-годинники",1699,True,
+                    ("103","SW-3","Smart Watch Чоловічий","Skmei","Смарт годинники",1699,True,
                      "https://zorro.com.ua/sw",{"Можливість розмовляти":"Ні","Матеріал ремінця":"Силікон"}),
-                    ("104","SW-4","Smart Call Watch","Skmei","Смарт-годинники",1899,True,
+                    ("104","SW-4","Smart Call Watch","Skmei","Смарт годинники",1899,True,
                      "https://zorro.com.ua/call",{"Можливість розмовляти":"Так","Матеріал ремінця":"Силікон"}),
                     ("105","OLD-5","Old Casio","Casio","Чоловічі годинники",999,False,
                      "https://zorro.com.ua/old",{"Матеріал ремінця":"Сталь"}),
@@ -57,6 +57,22 @@ class PgIntegrationTests(unittest.TestCase):
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'','',%s::jsonb)
                     """, (id,sku,name,vendor,category,price,available,url,
                           json.dumps(attrs,ensure_ascii=False)))
+
+    def test_smart_category_alias_matches_real_horoshop_taxonomy(self):
+        rows=search_products(self.conn,{
+            "max_price":2000,
+            "category":"Смартгодинники",
+            "must_have":{"Можливість розмовляти":"Так"},
+        })
+        self.assertEqual([p["site_id"] for p in rows],["104"])
+
+    def test_mens_singular_category_with_leather_exclusion(self):
+        rows=search_products(self.conn,{
+            "max_price":2000,
+            "category":"Чоловічий годинник",
+            "exclude":{"Матеріал ремінця":["Шкіряний"]},
+        })
+        self.assertEqual([p["site_id"] for p in rows],["101"])
 
     def test_budget_and_brand_are_enforced_in_real_sql(self):
         rows=search_products(self.conn,{"max_price":1500,"brand":"Skmei"})
