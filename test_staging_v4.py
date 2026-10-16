@@ -88,11 +88,12 @@ class StagingSafetyTests(unittest.TestCase):
         cfg=dict(CONF, DATABASE_URL="postgresql://prod:secret@zorro-prod.internal/zorro_db",
                  ZORRO_STAGING_DB_NAME="zorro_db", ZORRO_STAGING_DB_HOST="zorro-prod.internal",
                  ZORRO_USE_EXISTING_DB_READ_ONLY="1")
-        with patch.dict(os.environ,cfg,clear=True), patch.object(main,"db") as db, patch.object(staging_main.threading,"Thread") as thread:
+        with patch.dict(os.environ,cfg,clear=True), patch.object(main,"db") as db, patch.object(staging_main.threading,"Thread") as thread, patch.object(staging_main, "_verify_live_read_only_catalog", return_value=1035) as probe:
             staging_main.staging_startup()
             self.assertIs(main.db, staging_main._read_only_db)
             self.assertTrue(staging_main.staging_status()["existing_database_read_only"])
             thread.assert_not_called()
+            probe.assert_called_once_with()
 
     def test_existing_database_explicit_sync_is_forbidden(self):
         cfg=dict(CONF, DATABASE_URL="postgresql://prod:secret@zorro-prod.internal/zorro_db",
@@ -182,6 +183,37 @@ class StagingSafetyTests(unittest.TestCase):
                 self.assertEqual(response.status_code,200)
                 self.assertEqual(response.json()["status"],"error")
                 self.assertTrue(client.get("/api/staging-status").json()["private_access_ready"])
+
+    def test_live_sql_probe_accepts_only_actual_readonly_zorro_db(self):
+        from unittest.mock import MagicMock
+        conn=MagicMock()
+        cur=conn.cursor.return_value.__enter__.return_value
+        cur.fetchone.return_value=("zorro_db","on",1035)
+        with patch.object(staging_main,"_read_only_db",return_value=conn):
+            count=staging_main._verify_live_read_only_catalog()
+        self.assertEqual(count,1035)
+        self.assertIn("COUNT(*)",cur.execute.call_args.args[0])
+        conn.close.assert_called_once()
+
+    def test_live_sql_probe_rejects_wrong_db(self):
+        from unittest.mock import MagicMock
+        conn=MagicMock()
+        cur=conn.cursor.return_value.__enter__.return_value
+        cur.fetchone.return_value=("zorro_test","on",5)
+        with patch.object(staging_main,"_read_only_db",return_value=conn):
+            with self.assertRaises(RuntimeError):
+                staging_main._verify_live_read_only_catalog()
+        conn.close.assert_called_once()
+
+    def test_live_sql_probe_rejects_non_readonly_session(self):
+        from unittest.mock import MagicMock
+        conn=MagicMock()
+        cur=conn.cursor.return_value.__enter__.return_value
+        cur.fetchone.return_value=("zorro_db","off",1035)
+        with patch.object(staging_main,"_read_only_db",return_value=conn):
+            with self.assertRaises(RuntimeError):
+                staging_main._verify_live_read_only_catalog()
+        conn.close.assert_called_once()
 
     def test_staging_callback_cannot_send_real_message(self):
         self.assertFalse(main.send_telegram_notification("+380991234567", "test"))
