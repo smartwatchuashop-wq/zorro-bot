@@ -44,6 +44,16 @@ class RetrievalTests(unittest.TestCase):
         db=DB([watch("b","Second"),watch("a","First")])
         r=compare_by_ids(db,["a","b"])
         self.assertEqual([p["site_id"] for p in r],["a","b"])
+    def test_unknown_material_does_not_pass_exclusion(self):
+        p=watch("3","Unverified")
+        p["attributes"]={}
+        r=search_products(DB([p]),{"exclude":{"Матеріал ремінця":["Шкіряний"]}})
+        self.assertEqual(r,[])
+
+    def test_wrong_exclusion_shape_rejected(self):
+        with self.assertRaises(ValueError):
+            search_products(DB([]),{"exclude":{"Матеріал ремінця":"Шкіряний"}})
+
     def test_unknown_filter_rejected(self):
         with self.assertRaises(ValueError):
             search_products(DB([]),{"unsafe_sql":"DROP TABLE"})
