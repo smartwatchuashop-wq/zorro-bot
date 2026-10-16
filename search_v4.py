@@ -64,7 +64,16 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
 
     must = filters.get("must_have") or {}
     exclude = filters.get("exclude") or {}
-    include = [normalize(t) for t in (filters.get("include") or []) if normalize(t)]
+    if not isinstance(must, dict) or not isinstance(exclude, dict):
+        raise ValueError("Attribute filters must be objects")
+    if any(not isinstance(v, str) for v in must.values()):
+        raise ValueError("Required attribute values must be strings")
+    for key, vals in exclude.items():
+        if not isinstance(vals, list) or not vals or any(not isinstance(v, str) for v in vals):
+            raise ValueError(f"Exclusion values for {key} must be a list of strings")
+    if not isinstance(filters.get("include") or [], list):
+        raise ValueError("include must be an array")
+    include = [normalize(t) for t in (filters.get("include") or []) if isinstance(t, str) and normalize(t)]
     ranked = []
     for p in candidates:
         attrs = p.get("attributes") or {}
@@ -73,7 +82,8 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
         # exact field matching is mandatory, missing attributes are rejected.
         if any(not _field_match(attrs, k, v) for k, v in must.items()):
             continue
-        if any(any(_field_match(attrs, k, v) for v in vals)
+        # Unknown material must not count as confirmed "without leather".
+        if any(not normalize(attrs.get(k)) or any(_field_match(attrs, k, v) for v in vals)
                for k, vals in exclude.items()):
             continue
         searchable = " ".join([normalize(p.get("name")), normalize(p.get("vendor")),
