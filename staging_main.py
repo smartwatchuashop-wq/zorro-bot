@@ -13,9 +13,30 @@ import threading
 from urllib.parse import unquote, urlsplit
 
 import main as production_module
+from fastapi.responses import JSONResponse
 
 LOG = logging.getLogger("zorro.staging")
 app = production_module.app
+
+def _setup_pending() -> bool:
+    # Bootstrap without secrets for a new *separate* Free test service.
+    return os.getenv("ZORRO_STAGING_SETUP_MODE") == "1" and not os.getenv("DATABASE_URL")
+
+
+def _disabled_db():
+    raise RuntimeError("Staging database has not been configured")
+
+
+@app.middleware("http")
+async def _setup_gate(request, call_next):
+    if _setup_pending() and request.url.path not in ("/", "/api/staging-status"):
+        return JSONResponse(status_code=503, content={
+            "status": "setup_required",
+            "message": "Database has not been connected to the staging service"
+        })
+    return await call_next(request)
+
+
 _ORIGINAL_DB = production_module.db
 
 
@@ -68,6 +89,14 @@ production_module.send_telegram_notification = lambda phone, message="": False
 
 
 def staging_startup() -> None:
+    if _setup_pending():
+        if (os.getenv("ZORRO_ENV") != "staging"
+                or os.getenv("ZORRO_USE_EXISTING_DB_READ_ONLY") != "1"
+                or os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") != "0"):
+            raise RuntimeError("Unsafe staging setup configuration")
+        production_module.db = _disabled_db
+        LOG.warning("Staging bootstrap online without database or Gemini secrets")
+        return
     verify_staging_config()
     if os.getenv("ZORRO_USE_EXISTING_DB_READ_ONLY") == "1":
         production_module.db = _read_only_db
@@ -91,6 +120,8 @@ app.router.on_startup.append(staging_startup)
 def staging_status():
     return {
         "environment": "staging",
+        "setup_required": _setup_pending(),
+        "database_configured": bool(os.getenv("DATABASE_URL")),
         "catalog_sync_enabled": os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") == "1",
         "gemini_key_configured": bool(os.getenv("GEMINI_API_KEY")),
         "live_customer_notifications": False,
