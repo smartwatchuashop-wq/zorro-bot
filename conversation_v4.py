@@ -1,7 +1,7 @@
 """Zorro v4 conversation controller. Uses existing SQL retrieval; no production mutations."""
 import json, logging, os, re, requests
 from psycopg2.extras import RealDictCursor
-from search_v4 import search_products, compare_by_ids, normalize
+from search_v4 import search_products, compare_by_ids, normalize, canonical_watch_category
 LOG=logging.getLogger("zorro.v4")
 MODEL=os.getenv("GEMINI_MODEL","gemini-2.5-flash")
 HARD={"max_price","min_price","brand","category","sku","must_have","exclude"}
@@ -81,6 +81,12 @@ def handle_chat(data, connect, render_card, format_text):
             if k in ("exclude","must_have") and isinstance(v,dict):
                 filters[k]={**(filters.get(k) or {}),**v}
             else: filters[k]=v
+        # Reconcile Gemini's natural category wording with the verified
+        # Horoshop taxonomy before storing state for subsequent turns.
+        if filters.get("category"):
+            filters["category"] = (
+                canonical_watch_category(filters["category"]) or filters["category"]
+            )
         # Deterministic safety net for explicit category/type requirements.
         if re.search(r"чоловіч|для чоловік|для тата|для батька", message):
             filters["audience"]="men"
