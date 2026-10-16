@@ -30,8 +30,11 @@ def _field_match(attrs: dict, field: str, wanted: str) -> bool:
     if expected in ("так", "є", "yes", "true"):
         return value in ("так", "є", "yes", "true", "підтримується", "присутня", "присутній")
     if expected in ("ні", "немає", "no", "false"):
-        return value in ("ні", "немає", "no", "false", "відсутня", "відсутній")
-    # Match full token/phrase boundaries to avoid 'steel' matching 'not steel'.
+        return False  # Negative presence cannot fulfill a must-have constraint.
+    # Do not treat a negated feature ("без шкіри", "не підтримує дзвінки")
+    # as confirmation of the positive term inside it.
+    if value.startswith(("без ", "не ", "without ", "no ", "немає ", "відсутн")):
+        return False
     return expected == value or bool(re.search(r"(?<!\\w)" + re.escape(expected) + r"(?!\\w)", value))
 
 def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
