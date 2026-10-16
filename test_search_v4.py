@@ -119,6 +119,22 @@ class RetrievalTests(unittest.TestCase):
         found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Немає"}})
         self.assertEqual(found,[])
 
+    def test_negated_leather_not_positive(self):
+        p=watch("n1","Without leather",strap="Без шкіряного ремінця")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"шкіряного"}})
+        self.assertEqual(found,[])
+
+    def test_negated_calling_is_not_supported(self):
+        p=watch("n2","Smart")
+        p["attributes"]["Можливість розмовляти"]="Не підтримує дзвінки"
+        found=search_products(DB([p]),{"must_have":{"Можливість розмовляти":"дзвінки"}})
+        self.assertEqual(found,[])
+
+    def test_partial_word_is_not_material_match(self):
+        p=watch("n3","Steel")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"стал"}})
+        self.assertEqual(found,[])
+
     def test_unknown_filter_rejected(self):
         with self.assertRaises(ValueError):
             search_products(DB([]),{"unsafe_sql":"DROP TABLE"})
