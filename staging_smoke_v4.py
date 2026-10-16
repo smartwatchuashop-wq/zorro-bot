@@ -45,6 +45,31 @@ def list_supported_models() -> list[str]:
     return models
 
 
+def probe_gemini_generate(model: str) -> bool:
+    """Check a model using a tiny real generation and log only safe error fields."""
+    key = os.getenv("GEMINI_API_KEY", "")
+    response = requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        + model + ":generateContent",
+        headers={"x-goog-api-key": key},
+        json={"contents": [{"role": "user", "parts": [{"text": "Напиши лише OK."}]}],
+              "generationConfig": {"maxOutputTokens": 40}},
+        timeout=18
+    )
+    if response.status_code == 200:
+        LOG.warning("GEMINI_PROBE model=%s http_status=200 accepted=True", model)
+        return True
+    try:
+        err = response.json().get("error") or {}
+        msg = str(err.get("message", ""))[:350].replace(key, "[REDACTED]")
+        status = str(err.get("status", ""))[:50]
+    except (ValueError, AttributeError):
+        msg, status = "No structured error returned", "unknown"
+    LOG.warning("GEMINI_PROBE model=%s http_status=%s error_status=%s message=%s",
+                model, response.status_code, status, msg)
+    return False
+
+
 def run_smoke() -> None:
     import main
     import conversation_v4 as conversation
@@ -57,6 +82,14 @@ def run_smoke() -> None:
         raise RuntimeError(
             "Configured Gemini model is not in the model list: " + conversation.MODEL
         )
+    primary_ok = probe_gemini_generate(conversation.MODEL)
+    if not primary_ok:
+        for alternative in ("gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-flash-latest"):
+            if alternative != conversation.MODEL and alternative in available_models:
+                if probe_gemini_generate(alternative):
+                    LOG.warning("GEMINI_PROBE supported_fallback_model=%s", alternative)
+                    break
+        raise RuntimeError("Configured model failed Gemini generateContent; review model probe logs")
     intent = conversation.ai_json("Порадь чоловічий годинник до 2000 грн", [])
     if not isinstance(intent, dict) or intent.get("action") != "search":
         raise RuntimeError("Gemini intent request failed or returned the wrong action")
