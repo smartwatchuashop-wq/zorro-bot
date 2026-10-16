@@ -23,7 +23,8 @@ class WidgetContractTests(unittest.TestCase):
         self.assertIn("message:text",JS)
 
     def test_previous_history_captured_before_message(self):
-        self.assertLess(JS.index("var priorHistory = chatTurns.slice(-12)"),JS.index("addUserText(text)"))
+        body = JS.split("function sendTextMessage(text)",1)[1]
+        self.assertLess(body.index("var priorHistory = chatTurns.slice(-12)"),body.index("addUserText(text);"))
         self.assertIn("chatTurns.push({role:'user', content:text})",JS)
 
     def test_state_persisted_and_reset(self):
