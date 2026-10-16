@@ -7,7 +7,7 @@ from psycopg2.extras import RealDictCursor
 # Never remove mandatory restrictions to fill three recommendation slots.
 # Pass only an explicitly authorized, bounded set of request filters here.
 VALID_KEYS = {"max_price", "min_price", "brand", "category", "include", "exclude",
-              "must_have", "sku"}
+              "must_have", "sku", "audience", "watch_type"}
 STOPWORDS = {"годинник", "годинники", "хочу", "покажи", "для", "мені", "які", "моделі"}
 
 def normalize(value: Any) -> str:
@@ -49,8 +49,8 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
         clauses.append("LOWER(vendor) = LOWER(%s)")
         args.append(filters["brand"])
     if filters.get("category"):
-        clauses.append("LOWER(category) = LOWER(%s)")
-        args.append(filters["category"])
+        clauses.append("LOWER(category) LIKE LOWER(%s)")
+        args.append("%" + str(filters["category"]).strip() + "%")
     if filters.get("sku"):
         clauses.append("LOWER(sku) = LOWER(%s)")
         args.append(filters["sku"])
@@ -79,6 +79,21 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
         attrs = p.get("attributes") or {}
         if not isinstance(attrs, dict):
             attrs = {}
+        audience = normalize(filters.get("audience"))
+        corpus = normalize(p.get("category")) + " " + normalize(p.get("name")) + " " + _attr_text(p)
+        if audience == "men" and not any(x in corpus for x in ("чоловіч", "чоловік", "мужск")):
+            continue
+        if audience == "women" and not any(x in corpus for x in ("жіноч", "жінок", "женск")):
+            continue
+        if audience == "kids" and not any(x in corpus for x in ("дитяч", "діт", "детск")):
+            continue
+        typ = normalize(filters.get("watch_type"))
+        if typ == "smart" and not any(x in corpus for x in ("смарт", "smart", "розумн")):
+            continue
+        if typ in ("quartz", "mechanical"):
+            aliases = ("кварц", "quartz") if typ == "quartz" else ("механ", "автозавод", "mechan")
+            if not any(x in corpus for x in aliases):
+                continue
         # exact field matching is mandatory, missing attributes are rejected.
         if any(not _field_match(attrs, k, v) for k, v in must.items()):
             continue
