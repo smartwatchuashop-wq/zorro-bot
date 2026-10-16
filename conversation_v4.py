@@ -116,6 +116,8 @@ def handle_chat(data, connect, render_card, format_text):
             ids=[ids[0],ids[1]]
     if action=="question":
         return {"reply":"Можу підказати щодо товарів. Для точних умов доставки, оплати, повернення й гарантії потрібно звіритися з правилами магазину; не хочу вводити вас в оману.","state":state}
+    if action in ("compare", "describe") and not ids:
+        return {"reply":"Спочатку підберімо моделі для порівняння. Який бюджет і які функції важливі?","state":state}
     conn=connect()
     try:
         if action in ("compare","describe") and ids:
