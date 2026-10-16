@@ -6,6 +6,8 @@ The smoke logs catalog IDs and short model replies; never secret values.
 """
 import logging
 import re
+import os
+import requests
 from html import unescape
 
 from psycopg2.extras import RealDictCursor
@@ -13,11 +15,48 @@ from psycopg2.extras import RealDictCursor
 LOG = logging.getLogger("zorro.staging.smoke")
 
 
+def list_supported_models() -> list[str]:
+    """Read-only Gemini model discovery; headers carry the key, logs never do."""
+    key = os.getenv("GEMINI_API_KEY", "")
+    if not key:
+        raise RuntimeError("Gemini key is missing from staging")
+    r = requests.get(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={"x-goog-api-key": key},
+        timeout=18
+    )
+    if r.status_code != 200:
+        try:
+            error = r.json().get("error") or {}
+            reason = str(error.get("message") or "")[:200]
+        except (ValueError, AttributeError):
+            reason = "No structured error returned"
+        LOG.error("GEMINI_MODELS http_status=%s message=%s", r.status_code, reason)
+        return []
+    items = r.json().get("models", [])
+    models = [
+        str(m.get("name", "")).removeprefix("models/")
+        for m in items
+        if "generateContent" in (m.get("supportedGenerationMethods") or [])
+        and str(m.get("name", "")).startswith("models/gemini-")
+    ]
+    LOG.warning("GEMINI_MODELS generate_content_count=%d names=%s",
+                len(models), ",".join(models[:45]))
+    return models
+
+
 def run_smoke() -> None:
     import main
     import conversation_v4 as conversation
     from search_v4 import _field_match, _material_kinds
 
+    available_models = list_supported_models()
+    if not available_models:
+        raise RuntimeError("No Gemini generateContent models are visible to this API key")
+    if conversation.MODEL not in available_models:
+        raise RuntimeError(
+            "Configured Gemini model is not in the model list: " + conversation.MODEL
+        )
     intent = conversation.ai_json("Порадь чоловічий годинник до 2000 грн", [])
     if not isinstance(intent, dict) or intent.get("action") != "search":
         raise RuntimeError("Gemini intent request failed or returned the wrong action")
