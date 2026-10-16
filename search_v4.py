@@ -51,7 +51,7 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
     if unknown:
         raise ValueError(f"Unknown filters: {sorted(unknown)}")
     limit = max(1, min(20, int(limit)))
-    clauses = ["available = TRUE", "price IS NOT NULL", "url IS NOT NULL", "url <> ''"]
+    clauses = ["available = TRUE", "price IS NOT NULL", "price > 0", "url IS NOT NULL", "url <> ''"]
     args = []
     if filters.get("max_price") is not None:
         clauses.append("price <= %s")
@@ -153,5 +153,5 @@ def compare_by_ids(conn, ids: list[str]) -> list[dict]:
             "SELECT site_id, sku, name, vendor, category, price, available, url, "
             "image, description, attributes FROM zorro_products_v2 "
             "WHERE site_id = ANY(%s)", (ids,))
-        items = {str(r["site_id"]): dict(r) for r in cur.fetchall()}
+        items = {str(r["site_id"]): dict(r) for r in cur.fetchall() if r.get("available") and r.get("url") and r.get("price") is not None}
     return [items[str(x)] for x in ids if str(x) in items]
