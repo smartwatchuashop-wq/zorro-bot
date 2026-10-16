@@ -46,7 +46,9 @@ class PgIntegrationTests(unittest.TestCase):
                     ("106","UNKNOWN-6","Unknown strap","Casio","Чоловічі годинники",1799,True,
                      "https://zorro.com.ua/unknown",{}),
                     ("107","ZERO-7","Zero price","Casio","Чоловічі годинники",0,True,
-                     "https://zorro.com.ua/zero",{"Матеріал ремінця":"Сталь"})
+                     "https://zorro.com.ua/zero",{"Матеріал ремінця":"Сталь"}),
+                    ("108","STRAP-8","Ремінець чоловічий для смарт годинника","Hemsut","Ремінці",800,True,
+                     "https://zorro.com.ua/strap",{"Матеріал ремінця":"Сталевий"})
                 ]
                 for id,sku,name,vendor,category,price,available,url,attrs in rows:
                     cur.execute("""
@@ -84,6 +86,12 @@ class PgIntegrationTests(unittest.TestCase):
     def test_steel_positive_synonyms_in_real_database(self):
         rows=search_products(self.conn,{"must_have":{"Матеріал ремінця":"Сталевий"}})
         self.assertEqual([x["site_id"] for x in rows],["101"])
+
+    def test_real_sql_never_recommends_store_accessories_as_watches(self):
+        rows=search_products(self.conn,{})
+        self.assertNotIn("108",{p["site_id"] for p in rows})
+        # Forged prior IDs also cannot make an accessory appear in comparison.
+        self.assertEqual(compare_by_ids(self.conn,["108"]),[])
 
     def test_zero_price_excluded(self):
         ids={x["site_id"] for x in search_products(self.conn,{})}
