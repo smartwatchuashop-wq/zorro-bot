@@ -1,6 +1,6 @@
 # Zorro AI v4: staging verification and safe rollout
 
-**Status: NOT FOR PRODUCTION.** Work only on `zorro-hybrid-search-v4`. The Render production service follows `main` and must not be changed before verification.
+**Status: NOT FOR PRODUCTION.** An explicitly read-only connection to the existing production catalog is permitted for tests; all writes are forbidden. Work only on `zorro-hybrid-search-v4`. The Render production service follows `main` and must not be changed before verification.
 
 ## 1. Prepare isolated test infrastructure
 1. Duplicate the Render web service as a **new staging service**, selecting branch `zorro-hybrid-search-v4`. Do not redeploy or change the existing `fastapi-qie2` service.
@@ -28,6 +28,27 @@ New staging web service:
 - Before first catalog sync, verify the *actual* Render datastore linked to `DATABASE_URL` is not production. After verifying, change `ZORRO_STAGING_SYNC_ENABLED=1` on **staging only** and redeploy this staging service; the existing catalog worker will import public feed rows into the new DB.
 - `GET /api/staging-status` reports whether the test service is configured for sync and Gemini, without showing secrets.
 - Remember: matching the database name/hostname is a second-line safeguard, **not** a substitute for verifying Render's database resource identity.
+
+## Using the EXISTING Zorro database safely (no second PostgreSQL)
+
+Render currently allows only one active free-tier PostgreSQL database in this workspace. The user explicitly chose to test against the existing `zorro_db` instead of paying for another database.
+
+**Already performed:** real live-catalog SELECT checks through the Render plugin's read-only Postgres query tool. This does not deploy the new app, expose credentials or alter production.
+
+**For future staging HTTP tests**, create a *separate web service* from the v4 branch (do NOT redeploy the current service). The staging entrypoint has an explicit existing-database read-only mode:
+
+- Start command: `uvicorn staging_main:app --host 0.0.0.0 --port $PORT`
+- `ZORRO_ENV=staging`
+- `DATABASE_URL=<existing production database URL, added by the user in the Render environment settings; never paste it into chat or GitHub>`
+- `ZORRO_STAGING_DB_NAME=zorro_db`
+- `ZORRO_STAGING_DB_HOST=<verified actual hostname from the DATABASE_URL>`
+- `ZORRO_USE_EXISTING_DB_READ_ONLY=1`
+- `ZORRO_STAGING_SYNC_ENABLED=0` (MANDATORY)
+- `GEMINI_API_KEY=<key entered via Render secrets, if AI language-generation tests are needed>`
+
+In this mode: a) startup refuses another database name, mismatched host, or enabled sync; b) the production background catalog writer is replaced; c) all database connections opened through the API are marked `readonly=True` by psycopg2 before any SQL is executed; d) Telegram callbacks are disabled. GitHub Actions tests assert these guarantees and validate that PostgreSQL rejects attempted writes from a read-only session.
+
+**Caution:** Reusing live data increases operational risk compared with an isolated database. Do not run migrations, schema setup, SQL writes, manual product updates, or sync jobs against `zorro_db`. The name/host confirmation protects against mistakes but must be checked against the actual Render resource by a human. Read-only SELECT queries through the Render tool are the preferred method until a separate service has been reviewed.
 
 ## 2. Automated CI
 - Workflow `.github/workflows/v4-tests.yml` starts a disposable PostgreSQL 16 container and runs mocked conversation tests, real SQL/JSONB tests, API contract tests, and Node.js syntax checks for `zorro_widget_v4.html`.
