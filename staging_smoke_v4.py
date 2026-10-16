@@ -100,6 +100,9 @@ def run_smoke() -> None:
         result = conversation.handle_chat(data, main.db, main.product_html, main.format_ai_text)
         ids = [str(item["id"]) for item in result.get("products", [])]
         if not ids:
+            LOG.warning("GEMINI_SMOKE empty_products message=%s filters=%s reply=%s",
+                        message, result.get("state", {}).get("filters"), 
+                        unescape(re.sub(r"<[^>]*>", " ", result.get("reply", "")))[:250])
             raise RuntimeError("No verified products returned for: " + message)
         reply = result.get("reply") or ""
         if "Ось моделі з підтвердженими характеристиками." in reply:
@@ -132,24 +135,36 @@ def run_smoke() -> None:
 
     first_msg = "Порадь чоловічий годинник до 2000 грн"
     first, _ = ask(first_msg)
-    follow, follow_rows = ask(
-        "А без шкіряного ремінця?",
-        first["state"],
-        [main.Msg(role="user", content=first_msg)],
-    )
-    if not follow["state"].get("filters", {}).get("max_price") == 2000:
-        raise RuntimeError("Gemini follow-up lost initial budget")
-    for p in follow_rows.values():
-        material = (p.get("attributes") or {}).get("Матеріал ремінця")
-        if not material or "leather" in _material_kinds(material):
-            raise RuntimeError("Leather or unknown strap was returned: " + str(p["site_id"]))
-    LOG.warning("GEMINI_SMOKE leather_exclusion_ok=True budget_retained=True")
+    LOG.warning("GEMINI_SMOKE initial_filters=%s", first["state"].get("filters"))
+    history=[main.Msg(role="user", content=first_msg)]
+    follow_intent=conversation.ai_json("А без шкіряного ремінця?",
+                                      [{"role":"user","content":first_msg}])
+    LOG.warning("GEMINI_SMOKE follow_intent=%s", follow_intent)
+    errors=[]
+    try:
+        follow, follow_rows = ask("А без шкіряного ремінця?", first["state"], history)
+        if not follow["state"].get("filters", {}).get("max_price") == 2000:
+            raise RuntimeError("Gemini follow-up lost initial budget")
+        for p in follow_rows.values():
+            material = (p.get("attributes") or {}).get("Матеріал ремінця")
+            if not material or "leather" in _material_kinds(material):
+                raise RuntimeError("Leather or unknown strap was returned: " + str(p["site_id"]))
+        LOG.warning("GEMINI_SMOKE leather_exclusion_ok=True budget_retained=True")
+    except Exception as exc:
+        LOG.error("GEMINI_SMOKE followup_failed=%s", exc)
+        errors.append("followup")
 
-    smart, smart_rows = ask("Покажи смартгодинник до 2000 грн, щоб можна було розмовляти")
-    for p in smart_rows.values():
-        if "смарт" not in p["category"].casefold() or not _field_match(
-            p.get("attributes") or {}, "Можливість розмовляти", "Так"
-        ):
-            raise RuntimeError("Missing verified Bluetooth call ability for " + str(p["site_id"]))
-    LOG.warning("GEMINI_SMOKE smart_calling_ok=True")
+    try:
+        smart, smart_rows = ask("Покажи смартгодинник до 2000 грн, щоб можна було розмовляти")
+        for p in smart_rows.values():
+            if "смарт" not in p["category"].casefold() or not _field_match(
+                p.get("attributes") or {}, "Можливість розмовляти", "Так"
+            ):
+                raise RuntimeError("Missing verified Bluetooth call ability for " + str(p["site_id"]))
+        LOG.warning("GEMINI_SMOKE smart_calling_ok=True")
+    except Exception as exc:
+        LOG.error("GEMINI_SMOKE smart_failed=%s", exc)
+        errors.append("smart")
+    if errors:
+        raise RuntimeError("Smoke scenarios failed: " + ",".join(errors))
     LOG.warning("GEMINI_SMOKE RESULT=PASS; Gemini intent, answers, live PostgreSQL, follow-up and calling verified")
