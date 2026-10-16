@@ -77,6 +77,55 @@ class StagingSafetyTests(unittest.TestCase):
                     pass
             thread.assert_not_called()
 
+    def test_existing_database_requires_explicit_readonly_flag(self):
+        cfg=dict(CONF, DATABASE_URL="postgresql://prod:secret@zorro-prod.internal/zorro_db",
+                 ZORRO_STAGING_DB_NAME="zorro_db", ZORRO_STAGING_DB_HOST="zorro-prod.internal")
+        with patch.dict(os.environ,cfg,clear=True):
+            with self.assertRaises(RuntimeError):
+                staging_main.verify_staging_config()
+
+    def test_existing_database_never_starts_catalog_worker(self):
+        cfg=dict(CONF, DATABASE_URL="postgresql://prod:secret@zorro-prod.internal/zorro_db",
+                 ZORRO_STAGING_DB_NAME="zorro_db", ZORRO_STAGING_DB_HOST="zorro-prod.internal",
+                 ZORRO_USE_EXISTING_DB_READ_ONLY="1")
+        with patch.dict(os.environ,cfg,clear=True), patch.object(main,"db") as db, patch.object(staging_main.threading,"Thread") as thread:
+            staging_main.staging_startup()
+            self.assertIs(main.db, staging_main._read_only_db)
+            self.assertTrue(staging_main.staging_status()["existing_database_read_only"])
+            thread.assert_not_called()
+
+    def test_existing_database_explicit_sync_is_forbidden(self):
+        cfg=dict(CONF, DATABASE_URL="postgresql://prod:secret@zorro-prod.internal/zorro_db",
+                 ZORRO_STAGING_DB_NAME="zorro_db", ZORRO_STAGING_DB_HOST="zorro-prod.internal",
+                 ZORRO_USE_EXISTING_DB_READ_ONLY="1", ZORRO_STAGING_SYNC_ENABLED="1")
+        with patch.dict(os.environ,cfg,clear=True), patch.object(staging_main.threading,"Thread") as thread:
+            with self.assertRaises(RuntimeError):
+                staging_main.staging_startup()
+            thread.assert_not_called()
+
+    def test_existing_database_never_accepts_other_db_name(self):
+        cfg=dict(CONF, ZORRO_USE_EXISTING_DB_READ_ONLY="1")
+        with patch.dict(os.environ,cfg,clear=True):
+            with self.assertRaises(RuntimeError):
+                staging_main.verify_staging_config()
+
+    def test_readonly_connection_is_established_before_any_query(self):
+        from unittest.mock import MagicMock
+        conn=MagicMock()
+        with patch.object(staging_main,"_ORIGINAL_DB",return_value=conn):
+            result=staging_main._read_only_db()
+        self.assertIs(result,conn)
+        conn.set_session.assert_called_once_with(readonly=True)
+
+    def test_readonly_connection_failure_closes_connection(self):
+        from unittest.mock import MagicMock
+        conn=MagicMock()
+        conn.set_session.side_effect=RuntimeError("cannot enforce read-only")
+        with patch.object(staging_main,"_ORIGINAL_DB",return_value=conn):
+            with self.assertRaises(RuntimeError):
+                staging_main._read_only_db()
+        conn.close.assert_called_once()
+
     def test_staging_callback_cannot_send_real_message(self):
         self.assertFalse(main.send_telegram_notification("+380991234567", "test"))
 
