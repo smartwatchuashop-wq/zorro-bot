@@ -20,8 +20,19 @@ def _attr_text(product: dict) -> str:
 def _term_match(text: str, token: str) -> bool:
     return normalize(token) in text
 
+NEGATIVE_VALUES = {"ні", "нет", "немає", "отсутствует", "відсутня", "відсутній", "не підтримується", "не підтримує", "none", "false", "0", "-"}
+
 def _field_match(attrs: dict, field: str, wanted: str) -> bool:
-    return normalize(wanted) in normalize(attrs.get(field, ""))
+    value = normalize(attrs.get(field, ""))
+    expected = normalize(wanted)
+    if not value or not expected or value in NEGATIVE_VALUES:
+        return False
+    if expected in ("так", "є", "yes", "true"):
+        return value in ("так", "є", "yes", "true", "підтримується", "присутня", "присутній")
+    if expected in ("ні", "немає", "no", "false"):
+        return value in ("ні", "немає", "no", "false", "відсутня", "відсутній")
+    # Match full token/phrase boundaries to avoid 'steel' matching 'not steel'.
+    return expected == value or bool(re.search(r"(?<!\\w)" + re.escape(expected) + r"(?!\\w)", value))
 
 def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
     """SQL first: live inventory, price, vendor/category; then exact attribute rules and ranking.
