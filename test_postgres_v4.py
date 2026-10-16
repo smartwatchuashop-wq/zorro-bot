@@ -93,6 +93,22 @@ class PgIntegrationTests(unittest.TestCase):
         # Forged prior IDs also cannot make an accessory appear in comparison.
         self.assertEqual(compare_by_ids(self.conn,["108"]),[])
 
+    def test_postgres_readonly_session_rejects_catalog_writes(self):
+        # This test runs ONLY on the disposable GitHub Actions PostgreSQL.
+        # Existing production data is never touched by these regression tests.
+        self.conn.set_session(readonly=True)
+        try:
+            with self.assertRaises(psycopg2.Error):
+                with self.conn.cursor() as cur:
+                    cur.execute("UPDATE zorro_products_v2 SET price=10 WHERE site_id='101'")
+            self.conn.rollback()
+            with self.conn.cursor() as cur:
+                cur.execute("SHOW transaction_read_only")
+                self.assertEqual(cur.fetchone()[0], "on")
+        finally:
+            self.conn.rollback()
+            self.conn.set_session(readonly=False)
+
     def test_zero_price_excluded(self):
         ids={x["site_id"] for x in search_products(self.conn,{})}
         self.assertNotIn("107",ids)
