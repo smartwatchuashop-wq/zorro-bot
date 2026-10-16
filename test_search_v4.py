@@ -145,6 +145,28 @@ class RetrievalTests(unittest.TestCase):
         p["available"]=False
         self.assertEqual(compare_by_ids(DB([p]),["x"]),[])
 
+    def test_leather_synonyms_are_excluded(self):
+        leather=watch("leather","Natural leather",strap="Натуральна шкіра")
+        eco=watch("eco","Eco",strap="Екошкіра")
+        steel=watch("steel","Steel",strap="Нержавіюча сталь")
+        rows=search_products(DB([leather,eco,steel]),{"exclude":{"Матеріал ремінця":["Шкіряний"]}})
+        self.assertEqual([p["site_id"] for p in rows],["steel"])
+
+    def test_steel_synonyms_match(self):
+        p=watch("steel","Steel",strap="Сталевий")
+        rows=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталь"}})
+        self.assertEqual([x["site_id"] for x in rows],["steel"])
+
+    def test_generic_metal_cannot_prove_steel(self):
+        p=watch("metal","Metal",strap="Металевий")
+        rows=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталь"}})
+        self.assertEqual(rows,[])
+
+    def test_explicit_nonleather_is_not_a_positive_leather(self):
+        p=watch("nonleather","No leather",strap="Без шкіряного ремінця")
+        rows=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Шкіряний"}})
+        self.assertEqual(rows,[])
+
     def test_unknown_filter_rejected(self):
         with self.assertRaises(ValueError):
             search_products(DB([]),{"unsafe_sql":"DROP TABLE"})
