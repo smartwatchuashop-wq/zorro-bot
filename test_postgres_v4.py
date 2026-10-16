@@ -74,6 +74,17 @@ class PgIntegrationTests(unittest.TestCase):
         rows=compare_by_ids(self.conn,["104","105","101"])
         self.assertEqual([x["site_id"] for x in rows],["104","101"])
 
+    def test_leather_negative_synonyms_in_real_database(self):
+        rows=search_products(self.conn,{"exclude":{"Матеріал ремінця":["Шкіра"]}})
+        ids={x["site_id"] for x in rows}
+        self.assertNotIn("102",ids)
+        self.assertIn("101",ids)
+        self.assertNotIn("106",ids)
+
+    def test_steel_positive_synonyms_in_real_database(self):
+        rows=search_products(self.conn,{"must_have":{"Матеріал ремінця":"Сталевий"}})
+        self.assertEqual([x["site_id"] for x in rows],["101"])
+
     def test_zero_price_excluded(self):
         ids={x["site_id"] for x in search_products(self.conn,{})}
         self.assertNotIn("107",ids)
