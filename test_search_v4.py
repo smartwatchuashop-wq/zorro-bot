@@ -44,6 +44,20 @@ class RetrievalTests(unittest.TestCase):
         db=DB([watch("b","Second"),watch("a","First")])
         r=compare_by_ids(db,["a","b"])
         self.assertEqual([p["site_id"] for p in r],["a","b"])
+    def test_compare_numeric_db_ids_against_string_widget_ids(self):
+        p=watch(101,"First")
+        q=watch(202,"Second")
+        r=compare_by_ids(DB([q,p]),["101","202"])
+        self.assertEqual([x["site_id"] for x in r],[101,202])
+
+    def test_missing_required_attribute_rejected(self):
+        p=watch("3","Unverified")
+        p["attributes"]={}
+        self.assertEqual(search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталевий"}}),[])
+
+    def test_positive_keywords_require_evidence(self):
+        self.assertEqual(search_products(DB([watch("1","Steel")]),{"include":["компас"]}),[])
+
     def test_unknown_material_does_not_pass_exclusion(self):
         p=watch("3","Unverified")
         p["attributes"]={}
