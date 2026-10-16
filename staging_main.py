@@ -61,7 +61,7 @@ def staging_startup() -> None:
 # Remove the production startup handler that otherwise writes to DATABASE_URL.
 # Staging startup runs database verification *before* it may spawn the sync worker.
 app.router.on_startup.clear()
-app.add_event_handler("startup", staging_startup)
+app.router.on_startup.append(staging_startup)
 
 
 @app.get("/api/staging-status")
