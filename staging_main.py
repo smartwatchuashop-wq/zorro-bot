@@ -7,6 +7,7 @@ whenever DATABASE_URL is present.
 from __future__ import annotations
 
 import logging
+import secrets
 import os
 import re
 import threading
@@ -29,11 +30,23 @@ def _disabled_db():
 
 @app.middleware("http")
 async def _setup_gate(request, call_next):
-    if _setup_pending() and request.url.path not in ("/", "/api/staging-status"):
-        return JSONResponse(status_code=503, content={
-            "status": "setup_required",
-            "message": "Database has not been connected to the staging service"
-        })
+    # Everything beyond public health/status checks is private on staging.
+    # In particular, the chat endpoint can spend Gemini API credits.
+    if os.getenv("ZORRO_ENV") == "staging" and request.url.path not in ("/", "/api/staging-status"):
+        if _setup_pending():
+            return JSONResponse(status_code=503, content={
+                "status": "setup_required",
+                "message": "Database has not been connected to the staging service"
+            })
+        access_token = os.getenv("ZORRO_STAGING_ACCESS_TOKEN", "")
+        if len(access_token) < 24:
+            return JSONResponse(status_code=503, content={
+                "status": "setup_required",
+                "message": "A private staging access token has not been configured"
+            })
+        presented = request.headers.get("x-zorro-staging-token", "")
+        if not secrets.compare_digest(presented, access_token):
+            return JSONResponse(status_code=403, content={"status": "forbidden"})
     return await call_next(request)
 
 
@@ -122,6 +135,7 @@ def staging_status():
         "environment": "staging",
         "setup_required": _setup_pending(),
         "database_configured": bool(os.getenv("DATABASE_URL")),
+        "private_access_ready": len(os.getenv("ZORRO_STAGING_ACCESS_TOKEN", "")) >= 24,
         "catalog_sync_enabled": os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") == "1",
         "gemini_key_configured": bool(os.getenv("GEMINI_API_KEY")),
         "live_customer_notifications": False,
