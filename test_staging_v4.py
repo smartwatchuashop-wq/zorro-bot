@@ -215,6 +215,31 @@ class StagingSafetyTests(unittest.TestCase):
                 staging_main._verify_live_read_only_catalog()
         conn.close.assert_called_once()
 
+    def test_gemini_smoke_starts_only_with_opt_in_and_key(self):
+        cfg=dict(CONF,DATABASE_URL="postgresql://prod:secret@prod.internal/zorro_db",
+                 ZORRO_STAGING_DB_NAME="zorro_db",ZORRO_STAGING_DB_HOST="prod.internal",
+                 ZORRO_USE_EXISTING_DB_READ_ONLY="1",ZORRO_STAGING_GEMINI_SMOKE="1",
+                 GEMINI_API_KEY="dummy-only-for-tests")
+        with patch.dict(os.environ,cfg,clear=True), patch.object(
+                staging_main,"_verify_live_read_only_catalog",return_value=1035), patch.object(
+                staging_main.threading,"Thread") as thread:
+            staging_main.staging_startup()
+            thread.assert_called_once()
+            self.assertIs(thread.call_args.kwargs["target"],
+                          staging_main._run_smoke_with_error_logging)
+            thread.return_value.start.assert_called_once()
+
+    def test_gemini_smoke_fails_closed_without_key(self):
+        cfg=dict(CONF,DATABASE_URL="postgresql://prod:secret@prod.internal/zorro_db",
+                 ZORRO_STAGING_DB_NAME="zorro_db",ZORRO_STAGING_DB_HOST="prod.internal",
+                 ZORRO_USE_EXISTING_DB_READ_ONLY="1",ZORRO_STAGING_GEMINI_SMOKE="1")
+        with patch.dict(os.environ,cfg,clear=True), patch.object(
+                staging_main,"_verify_live_read_only_catalog",return_value=1035), patch.object(
+                staging_main.threading,"Thread") as thread:
+            with self.assertRaises(RuntimeError):
+                staging_main.staging_startup()
+            thread.assert_not_called()
+
     def test_staging_callback_cannot_send_real_message(self):
         self.assertFalse(main.send_telegram_notification("+380991234567", "test"))
 
