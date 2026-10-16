@@ -81,6 +81,20 @@ class RetrievalTests(unittest.TestCase):
         r=search_products(DB([smart,quartz]),{"watch_type":"quartz"})
         self.assertEqual([p["site_id"] for p in r],["2"])
 
+    def test_smart_product_with_quartz_keyword_is_not_quartz_watch(self):
+        smart=watch("1","Smart Watch кварц")
+        smart["category"]="Смарт-годинники"
+        classic=watch("2","Кварцовий чоловічий годинник")
+        found=search_products(DB([smart,classic]),{"watch_type":"quartz"})
+        self.assertEqual([p["site_id"] for p in found],["2"])
+
+    def test_mechanical_watch_is_not_smart_even_with_function_terms(self):
+        smart=watch("1","Smart механічний стиль")
+        smart["category"]="Смарт-годинники"
+        mechanical=watch("2","Механічний годинник")
+        found=search_products(DB([smart,mechanical]),{"watch_type":"mechanical"})
+        self.assertEqual([p["site_id"] for p in found],["2"])
+
     def test_category_filter_parameterized(self):
         db=DB([])
         search_products(db,{"category":"Чоловічі"})
