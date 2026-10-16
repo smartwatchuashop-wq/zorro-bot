@@ -53,6 +53,8 @@ def handle_chat(data, connect, render_card, format_text):
     ai=ai_json(data.message,history) or {}
     message=data.message.casefold()
     action=ai.get("action","search")
+    if action not in ("search", "compare", "describe", "question"):
+        action="search"
     if any(t in message for t in ("порівняй","порівняти","чим відрізня","перший і третій","ці моделі")):
         action="compare"
     if any(t in message for t in ("доставка","оплата","повернен","гарантія","контакт")):
@@ -60,6 +62,8 @@ def handle_chat(data, connect, render_card, format_text):
     ids=[str(x) for x in state.get("product_ids",[])][:10]
     filters=dict(state.get("filters") or {})
     proposed=ai.get("filters") or {}
+    if not isinstance(proposed, dict):
+        proposed={}
     allowed={"max_price","min_price","brand","category","sku","include","must_have","exclude"}
     proposed={k:v for k,v in proposed.items() if k in allowed}
     # A new explicit search resets preferences unless it is a follow-up.
@@ -73,6 +77,15 @@ def handle_chat(data, connect, render_card, format_text):
         # Cheap deterministic safety net for budget if AI misses it.
         found=re.search(r"\bдо\s*(\d[\d ]*)\s*(?:грн|₴)?",message)
         if found: filters["max_price"]=int(found.group(1).replace(" ",""))
+    # If Gemini fails, do not silently invent an unconstrained catalog recommendation.
+    if not ai and action=="search" and not filters and not proposed:
+        return {"reply":"Уточніть, будь ласка, тип годинника, бажаний бюджет або важливі функції — і я підберу за перевіреними характеристиками.","state":state}
+    # Reuse the existing selection for comparison, including ordinal references.
+    if action=="compare" and ids:
+        if re.search(r"перш\w*\s+(?:і|та)\s+трет",message) and len(ids)>=3:
+            ids=[ids[0],ids[2]]
+        elif re.search(r"перш\w*\s+(?:і|та)\s+друг",message) and len(ids)>=2:
+            ids=[ids[0],ids[1]]
     conn=connect()
     try:
         if action in ("compare","describe") and ids:
