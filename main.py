@@ -1,7 +1,15 @@
-import os, re, json, html, logging, threading, time
+import os
+import re
+import json
+import html
+import logging
+import threading
+import time
+import urllib.parse
 import xml.etree.ElementTree as ET
 from decimal import Decimal
-import requests, psycopg2
+import requests
+import psycopg2
 from psycopg2.extras import RealDictCursor, execute_batch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +19,17 @@ LOG = logging.getLogger('zorro')
 logging.basicConfig(level=logging.INFO)
 
 SHOP_XML = 'https://zorro.com.ua/content/export/c929bc168711aedbbcad10f5bb726db0.xml'
-BEST_XML = 'https://support.best-time.biz/api/feed/drops/ua'
+BEST_XML_LIST = [
+    'https://best-time.biz/ua.xml',
+    'https://support.best-time.biz/api/feed/drops/ua'
+]
+
+CANDIDATE_MODELS = [
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-2.5-pro'
+]
 
 app = FastAPI()
 
@@ -38,75 +56,131 @@ class CallbackInput(BaseModel):
 def db():
     return psycopg2.connect(
         os.environ['DATABASE_URL'],
-        connect_timeout=8
+        connect_timeout=10
     )
 
+def clean_html_tags(raw_text: str) -> str:
+    if not raw_text:
+        return ''
+    return re.sub(r'<.*?>', ' ', raw_text).strip()
+
+def fetch_xml(url: str):
+    r = requests.get(
+        url,
+        timeout=90,
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ZorroCatalog/3.0'}
+    )
+    r.raise_for_status()
+    return ET.fromstring(r.content)
+
 def catalog_rows():
-    def xml(url):
-        r = requests.get(
-            url,
-            timeout=90,
-            headers={'User-Agent': 'Mozilla/5.0 ZorroCatalog/2.0'}
-        )
-        r.raise_for_status()
-        return ET.fromstring(r.content)
+    zr = fetch_xml(SHOP_XML)
 
-    zr, br = xml(SHOP_XML), xml(BEST_XML)
+    br = None
+    for b_url in BEST_XML_LIST:
+        try:
+            br = fetch_xml(b_url)
+            if br is not None:
+                break
+        except Exception as e:
+            LOG.warning(f"Не вдалося завантажити {b_url}: {e}")
 
-    categories = {
+    categories_z = {
         c.get('id'): (c.text or '').strip()
         for c in zr.findall('.//categories/category')
     }
 
-    supplier = {
-        p.get('id'): p
-        for p in br.findall('.//offers/offer')
-    }
+    categories_b = {}
+    supplier_by_id = {}
+    supplier_by_vcode = {}
+
+    if br is not None:
+        categories_b = {
+            c.get('id'): (c.text or '').strip()
+            for c in br.findall('.//categories/category')
+        }
+        for p in br.findall('.//offers/offer'):
+            oid = (p.get('id') or '').strip()
+            vcode = (p.findtext('vendorCode') or '').strip()
+            if oid:
+                supplier_by_id[oid] = p
+            if vcode:
+                supplier_by_vcode[vcode] = p
 
     result = []
 
     for z in zr.findall('.//offers/offer'):
+        site_id = (z.get('id') or '').strip()
         sid = (z.findtext('vendorCode') or '').strip()
-        s = supplier.get(sid)
 
-        attrs = {
-            p.get('name').strip(): (p.text or '').strip()
-            for p in s.findall('param')
-            if p.get('name') and (p.text or '').strip()
-        } if s is not None else {}
+        # Шукаємо відповідність у BestTime і за vendorCode, і за id
+        s = supplier_by_vcode.get(sid) or supplier_by_id.get(sid) or supplier_by_id.get(site_id)
 
-        # Додаємо параметри з Хорошопу, якщо їх немає від постачальника
+        attrs = {}
+        if s is not None:
+            b_cat_id = (s.findtext('categoryId') or '').strip()
+            if b_cat_id in categories_b:
+                attrs['Категорія постачальника'] = categories_b[b_cat_id]
+            for p in s.findall('param'):
+                k = (p.get('name') or '').strip()
+                v = (p.text or '').strip()
+                if k and v:
+                    attrs[k] = v
+
+        # Доповнюємо параметрами із самого сайту Zorro (Хорошоп)
         for p in z.findall('param'):
-            p_name = p.get('name', '').strip()
-            p_val = (p.text or '').strip()
-            if p_name and p_val and p_name not in attrs:
-                attrs[p_name] = p_val
+            k = (p.get('name') or '').strip()
+            v = (p.text or '').strip()
+            if k and v and k not in attrs:
+                attrs[k] = v
 
         try:
             price = Decimal((z.findtext('price') or '').replace(',', '.'))
         except Exception:
             continue
 
-        item = (
-            z.get('id'),
-            sid,
-            (s.findtext('vendorCode') if s is not None else '') or sid,
-            (z.findtext('name') or '').strip(),
-            categories.get(z.findtext('categoryId'), ''),
-            price,
-            z.get('available') == 'true',
-            (z.findtext('vendor') or '').strip(),
-            (z.findtext('description') or '').strip(),
-            (z.findtext('url') or '').strip(),
-            (z.findtext('picture') or '').strip(),
-            json.dumps(attrs, ensure_ascii=False)
+        name = (z.findtext('name') or z.findtext('name_ua') or '').strip()
+        cat_name = categories_z.get((z.findtext('categoryId') or '').strip(), '')
+        if not cat_name and 'Категорія постачальника' in attrs:
+            cat_name = attrs['Категорія постачальника']
+
+        vendor = (z.findtext('vendor') or (s.findtext('vendor') if s is not None else '') or '').strip()
+        desc = clean_html_tags(
+            z.findtext('description') or z.findtext('description_ua') or
+            (s.findtext('description_ua') if s is not None else '') or ''
         )
 
-        if item[0] and item[3]:
-            result.append(item)
+        raw_url = (z.findtext('url') or '').strip()
+        if not raw_url or raw_url.rstrip('/') == 'https://zorro.com.ua':
+            raw_url = f"https://zorro.com.ua/katalog/search/?q={urllib.parse.quote_plus(name)}"
+
+        pic_el = z.find('picture')
+        image = pic_el.text.strip() if (pic_el is not None and pic_el.text) else ''
+        if not image and s is not None:
+            s_pic = s.find('picture')
+            if s_pic is not None and s_pic.text:
+                image = s_pic.text.strip()
+
+        available = (z.get('available') == 'true')
+
+        if site_id and name:
+            result.append((
+                site_id,
+                sid,
+                (s.findtext('vendorCode') if s is not None else '') or sid,
+                name,
+                cat_name,
+                price,
+                available,
+                vendor,
+                desc,
+                raw_url,
+                image,
+                json.dumps(attrs, ensure_ascii=False)
+            ))
 
     if len(result) < 50:
-        raise RuntimeError('Каталог підозріло малий, синхронізацію скасовано')
+        raise RuntimeError('Каталог занадто малий, синхронізацію скасовано')
 
     return result
 
@@ -172,8 +246,7 @@ def refresh():
                     ''',
                     (ids,)
                 )
-
-        LOG.info('Catalog synchronized: %d products', len(rows))
+        LOG.info('Каталог синхронізовано: %d товарів', len(rows))
     finally:
         conn.close()
 
@@ -182,7 +255,7 @@ def worker():
         try:
             refresh()
         except Exception:
-            LOG.exception('Помилка синхронізації каталогу')
+            LOG.exception('Помилка фонової синхронізації')
         time.sleep(6 * 3600)
 
 @app.on_event('startup')
@@ -192,134 +265,450 @@ def start():
     else:
         LOG.error('DATABASE_URL відсутня')
 
-def intent_from(text):
+# =====================================================================
+# ТАРГЕТОВАНИЙ ПОШУКОВИЙ РУШІЙ (МІНУС-СЛОВА + КЛЮЧОВІ СЛОВА + ВАГИ)
+# =====================================================================
+
+NEGATIVE_ACCESSORY_WORDS = (
+    'зарядн', 'кабель', 'провід', 'шнур', 'док-станц',
+    'ремінець', 'браслет до', 'браслет для', 'ремінець для',
+    'коробочк', 'коробка', 'скриньк', 'футляр', 'подарунков',
+    'корпус до', 'захисне скло', 'плівка', 'рюкзак', 'послуг'
+)
+
+BRANDS_MAP = {
+    'skmei': 'skmei', 'скмей': 'skmei', 'скмеі': 'skmei',
+    'winner': 'winner', 'віннер': 'winner', 'вінер': 'winner',
+    'jaragar': 'jaragar', 'джарагар': 'jaragar',
+    'forsining': 'forsining', 'форсінінг': 'forsining',
+    'geneva': 'geneva', 'женева': 'geneva',
+    'amst': 'amst', 'амст': 'amst',
+    'weide': 'weide', 'вейде': 'weide',
+    'uwatch': 'uwatch', 'ювотч': 'uwatch',
+    'curren': 'curren', 'каррен': 'curren', 'карен': 'curren',
+    'pagani': 'pagani', 'пагані': 'pagani',
+    'north edge': 'north edge', 'норт едж': 'north edge', 'норс едж': 'north edge',
+    'lige': 'lige', 'лідж': 'lige', 'ліге': 'lige',
+    'lobinni': 'lobinni', 'лобінні': 'lobinni',
+    'megalith': 'megalith', 'мегаліт': 'megalith',
+    'sanda': 'sanda', 'санда': 'sanda',
+    'smael': 'smael', 'смаел': 'smael',
+    'crrju': 'crrju', 'cheetah': 'cheetah',
+    'ailang': 'ailang', 'айланг': 'ailang',
+    'aesop': 'aesop', 'езоп': 'aesop',
+    'besta': 'besta', 'беста': 'besta',
+    'carnival': 'carnival', 'карнівал': 'carnival',
+    'hemsut': 'hemsut', 'хемсут': 'hemsut',
+    'guanquin': 'guanquin', 'megir': 'megir', 'мегір': 'megir',
+    'naviforce': 'naviforce', 'навіфорс': 'naviforce',
+    'sinobi': 'sinobi', 's-shock': 's-shock', 'reginald': 'reginald'
+}
+
+STOP_WORDS = {
+    'годинник', 'годинники', 'годинника', 'наручний', 'наручні', 'модель', 'моделі',
+    'порадь', 'порадьте', 'підкажи', 'підкажіть', 'підбери', 'підберіть', 'покажи',
+    'покажіть', 'хочу', 'купити', 'шукаю', 'потрібен', 'потрібні', 'який', 'які',
+    'яка', 'мені', 'для', 'під', 'або', 'чи', 'та', 'що', 'це', 'вітаю', 'добрий',
+    'день', 'ціна', 'грн', 'варіант', 'варіанти', 'надійний', 'надійні', 'хороший',
+    'кращий', 'найкращі', 'стильний', 'стильні', 'будь', 'ласка', 'розкажи', 'детальніше',
+    'опис', 'характеристики', 'цих', 'моделей', 'порівняй', 'між', 'собою'
+}
+
+def is_followup_question(text: str) -> bool:
     q = text.casefold()
+    followup_triggers = (
+        'розкажи детальніше', 'опис моделей', 'опис товару',
+        'порівняй', 'чим вони відрізняються', 'який з них кращ',
+        'а у першого', 'а у другого', 'а у третього', 'про перший', 'про другий'
+    )
+    return any(t in q for t in followup_triggers)
 
-    m = re.search(r'(?:до|не більше|максимум|бюджет)\s*(\d[\d\s]*)\s*(?:грн|₴)?', q)
+def parse_single_message(text: str) -> dict:
+    q = text.casefold()
+    res = {}
 
-    audience = None
-    if re.search(r'дитяч|для дитин|дитині|хлопчик|дівчат', q):
-        audience = 'kids'
-    elif re.search(r'жіноч|для жінк|дівчин', q):
-        audience = 'women'
-    elif re.search(r'чоловіч|для чоловік|хлопц', q):
-        audience = 'men'
+    # 1. Чи просить клієнт сам аксесуар (ремінець / зарядку / коробку)?
+    if re.search(r'ремінець|ремінці|браслет для|зарядк|зарядн|кабель|коробк|коробочк|скриньк|футляр', q):
+        res['wants_accessory'] = True
+        if 'ремінець' in q or 'ремінці' in q:
+            res['accessory_type'] = 'ремінець'
+        elif 'заряд' in q or 'кабель' in q:
+            res['accessory_type'] = 'зарядн'
+        elif 'короб' in q or 'скриньк' in q:
+            res['accessory_type'] = 'короб'
+    elif re.search(r'годинник|модел|смарт|механ|кварц|скелетон', q):
+        res['wants_accessory'] = False
 
-    category_type = None
-    if re.search(r'смарт|smart|розумн', q):
-        category_type = 'smart'
-    elif re.search(r'механ|автозавод|скелетон', q):
-        category_type = 'mechanical'
+    # 2. Ціна (від / до)
+    m_max = re.search(r'(?:до|не більше|максимум|бюджет|дешевше)\s*(\d[\d\s]*)\s*(?:грн|₴)?', q)
+    if m_max:
+        res['max_price'] = int(m_max.group(1).replace(' ', ''))
+    m_min = re.search(r'(?:від|дорожче|мінімум)\s*(\d[\d\s]*)\s*(?:грн|₴)?', q)
+    if m_min:
+        res['min_price'] = int(m_min.group(1).replace(' ', ''))
 
-    style = None
-    if re.search(r'спорт|sport', q):
-        style = 'sport'
-    elif re.search(r'тактич|військов|мілітарі', q):
-        style = 'tactical'
-    elif re.search(r'класич|елегант', q):
-        style = 'classic'
+    # 3. Цільова аудиторія (Чоловічі / Жіночі / Дитячі)
+    if re.search(r'дитяч|дитині|для дитин|хлопчик|дівчинк|школ|малюк', q):
+        res['audience'] = 'kids'
+    elif re.search(r'жіноч|для жінк|жінці|дівчині|для дівчат|леді', q):
+        res['audience'] = 'women'
+    elif re.search(r'чоловіч|для чоловік|чоловіку|хлопцю|шефу|батьку|татові', q):
+        res['audience'] = 'men'
 
-    return {
-        'max_price': int(m.group(1).replace(' ', '')) if m else None,
-        'audience': audience,
-        'category_type': category_type,
-        'style': style,
-        'calls': bool(re.search(r'дзвін|виклики|розмов|говорити|sim|сім', q)),
-        'waterproof': bool(re.search(r'водонепроник|плаван|басейн|купат', q)),
-        'skeleton': bool(re.search(r'скелетон|прозор', q)),
-        'leather': bool(re.search(r'шкірян|кожан', q)),
-        'steel': bool(re.search(r'сталев|метал|сталь', q))
-    }
+    # 4. Тип годинника (Смарт / Механіка / Кварц)
+    if re.search(r'смарт|smart|розумн|фітнес|сенсорн', q):
+        res['watch_type'] = 'smart'
+    elif re.search(r'механ|автозавод|скелетон|турбілліон|турбійон|без батарейк', q):
+        res['watch_type'] = 'mechanical'
+    elif re.search(r'кварц|стрілочн|на батарейц', q):
+        res['watch_type'] = 'quartz'
 
-def get_intent(data):
-    result = {}
-    history_messages = [m.content for m in data.history if m.role in ('user', 'human')]
-    history_messages.append(data.message)
+    # 5. Стиль
+    if re.search(r'тактич|військов|мілітарі|армійськ|для зсу|зсу|камуфляж', q):
+        res['style'] = 'tactical'
+    elif re.search(r'спорт|sport|біг|тренуван|активн|протиудар|ударостійк', q):
+        res['style'] = 'sport'
+    elif re.search(r'класич|класик|елегант|ділов|під костюм|офісн', q):
+        res['style'] = 'classic'
+    elif re.search(r'патріот|тризуб|україн', q):
+        res['style'] = 'patriotic'
 
-    for msg in history_messages[-4:]:
-        parsed = intent_from(msg)
+    # 6. Ремінець / Браслет
+    if re.search(r'шкірян|шкіра|кожан', q):
+        res['strap'] = 'leather'
+    elif re.search(r'сталев|сталь|метал|титан', q):
+        res['strap'] = 'steel'
+    elif re.search(r'каучук|силікон|гумов|полімер|rubber', q):
+        res['strap'] = 'rubber'
+
+    # 7. Водозахист
+    if re.search(r'плаван|басейн|купат|пірнат|водонепроник|5\s*атм|10\s*атм|50\s*м|100\s*м', q):
+        res['waterproof'] = 'swimming'
+    elif re.search(r'водостійк|мити руки|дощ|3\s*атм', q):
+        res['waterproof'] = 'rain'
+
+    # 8. Спеціальні функції та параметри
+    if re.search(r'дзвін|виклик|розмов|говорити|мікрофон|динамік|sim|сім-карт', q):
+        res['calls'] = True
+        res['watch_type'] = 'smart'
+    if re.search(r'\bgps\b|джпс|геолокац|місцезнаходжен|відстежен|sos|прослуховуван', q):
+        res['gps'] = True
+    if re.search(r'скелетон|прозор\w*\s+кришк|видно механізм', q):
+        res['skeleton'] = True
+    if re.search(r'автозавод', q):
+        res['autowind'] = True
+    if re.search(r'пульс|тиск|крокомір|сон|здоров', q):
+        res['health'] = True
+    if re.search(r'римськ', q):
+        res['roman'] = True
+    if re.search(r'арабськ', q):
+        res['arabic'] = True
+    if re.search(r'фосфор|люмінесцент|світяться|підсвітк|підсвічуван', q):
+        res['backlight'] = True
+    if re.search(r'прямокутн|квадратн', q):
+        res['shape'] = 'rectangular'
+    elif re.search(r'кругл', q):
+        res['shape'] = 'round'
+    if re.search(r'японськ|miyota|мійота', q):
+        res['japanese'] = True
+    if re.search(r'хронограф|секундомір|будильник|таймер|календар|дата', q):
+        res['chrono'] = True
+
+    # 9. Колір
+    for col_root, col_name in [
+        ('чорн', 'чорн'), ('сріб', 'сріб'), ('золот', 'золот'),
+        ('біл', 'біл'), ('син', 'син'), ('зелен', 'зелен'),
+        ('коричн', 'коричн'), ('рожев', 'рожев'), ('сір', 'сір'), ('червон', 'червон')
+    ]:
+        if re.search(r'\b' + col_root, q):
+            res['color'] = col_name
+            break
+
+    # 10. Бренд
+    for b_alias, b_canon in BRANDS_MAP.items():
+        if re.search(r'\b' + re.escape(b_alias) + r'\b', q):
+            res['brand'] = b_canon
+            break
+
+    # 11. Ключові слова (для вільного пошуку як у Google)
+    words = re.findall(r'[а-яіїєґa-z0-9\-]+', q)
+    kws = [w for w in words if len(w) >= 3 and w not in STOP_WORDS and not w.isdigit()]
+    if kws:
+        res['keywords'] = kws
+
+    return res
+
+def build_intent(data: ChatInput) -> dict:
+    intent = {'wants_accessory': False, 'keywords': []}
+    user_msgs = [m.content for m in data.history[-8:] if m.role in ('user', 'human')]
+    user_msgs.append(data.message)
+
+    for msg in user_msgs:
+        q = msg.casefold()
+        if is_followup_question(q) and msg == data.message and len(user_msgs) > 1:
+            # Якщо це питання "порівняй ці моделі" або "опис моделей" — зберігаємо попередній фільтр!
+            intent['is_followup'] = True
+            continue
+
+        parsed = parse_single_message(msg)
+
+        if 'без обмеження бюджету' in q or 'будь-яка ціна' in q:
+            intent.pop('max_price', None)
+
+        # Розумне скидання несумісних фільтрів при зміні теми:
+        if parsed.get('watch_type') and parsed.get('watch_type') != intent.get('watch_type'):
+            if parsed['watch_type'] in ('mechanical', 'quartz'):
+                intent.pop('calls', None)
+                intent.pop('gps', None)
+                intent.pop('health', None)
+            elif parsed['watch_type'] == 'smart':
+                intent.pop('skeleton', None)
+                intent.pop('autowind', None)
+
+        if parsed.get('audience') and parsed.get('audience') != intent.get('audience'):
+            if parsed['audience'] != 'kids':
+                intent.pop('gps', None)
+
         for k, v in parsed.items():
-            if v:
-                result[k] = v
-    return result
+            if k == 'keywords':
+                intent['keywords'] = v
+            elif v is not None:
+                intent[k] = v
 
-def select_products(rows, intent, limit=3):
-    scored = []
+    return intent
 
-    for p in rows:
-        if not p.get('available') or not p.get('url') or p.get('price') is None:
+def build_positive_index(p: dict) -> tuple[str, dict]:
+    """
+    Будує чистий пошуковий індекс товару, ВИРІЗАЮЧИ всі характеристики зі значенням
+    'Немає', 'Ні', '0 м', 'Відсутня', щоб уникнути хибних спрацьовувань.
+    """
+    a = p.get('attributes') or {}
+    positive_attrs = {}
+    NEGATIVE_VALS = {'немає', 'ні', '0 м', 'відсутня', 'відсутня індикація', 'без водозахисту', '-'}
+
+    for k, v in a.items():
+        v_clean = str(v).strip()
+        v_low = v_clean.casefold()
+        if v_low in NEGATIVE_VALS or v_low.startswith('немає'):
             continue
+        positive_attrs[k] = v_clean
 
-        price = float(p['price'])
-        if intent.get('max_price') and price > intent['max_price']:
-            continue
+    pos_attrs_str = ' '.join(f"{k}: {v}" for k, v in positive_attrs.items()).casefold()
+    return pos_attrs_str, positive_attrs
 
-        name_l = (p.get('name') or '').casefold()
-        desc_l = (p.get('description') or '').casefold()
-        cat_l = (p.get('category') or '').casefold()
-        a = p.get('attributes') or {}
-        attrs_str = ' '.join(f"{k} {v}" for k, v in a.items()).casefold()
-        full_text = f"{name_l} {desc_l} {cat_l} {attrs_str}"
+def select_products(rows: list[dict], intent: dict, limit: int = 3) -> list[dict]:
+    def filter_and_score(strict_mode: bool = True):
+        scored = []
+        wants_acc = intent.get('wants_accessory', False)
 
-        # 1. Жорсткі обмеження (Harness)
-        if intent.get('audience') == 'kids':
-            if not any(k in full_text for k in ['дитяч', 'для дітей', 'дитині', 'хлопчик', 'дівчат', 'baby', 'q100']):
-                continue
-        elif intent.get('audience') == 'women':
-            if any(k in full_text for k in ['чоловіч', 'для чоловіків']) and not any(k in full_text for k in ['жіноч', 'для жінок']):
-                continue
-        elif intent.get('audience') == 'men':
-            if any(k in full_text for k in ['жіноч', 'для жінок']) and not any(k in full_text for k in ['чоловіч', 'для чоловіків']):
+        for p in rows:
+            if not p.get('available') or not p.get('url') or p.get('price') is None:
                 continue
 
-        if intent.get('category_type') == 'smart':
-            if not any(k in full_text for k in ['smart', 'смарт', 'watch']):
+            price = float(p['price'])
+            name_l = (p.get('name') or '').casefold()
+            vendor_l = (p.get('vendor') or '').casefold()
+            cat_l = (p.get('category') or '').casefold()
+            desc_l = (p.get('description') or '').casefold()
+            sku_l = (p.get('sku') or '').casefold()
+
+            pos_attrs_str, pos_attrs = build_positive_index(p)
+            a_raw = p.get('attributes') or {}
+
+            # 1. ЗАЛІЗНИЙ МІНУС-ФІЛЬТР: Відсікаємо зарядки, кабелі, ремінці та коробки
+            is_acc = any(w in name_l or w in cat_l for w in NEGATIVE_ACCESSORY_WORDS)
+            if not wants_acc and is_acc:
                 continue
-        elif intent.get('category_type') == 'mechanical':
-            if not any(k in full_text for k in ['механ', 'автозавод']):
+            if wants_acc:
+                if not is_acc:
+                    continue
+                acc_t = intent.get('accessory_type')
+                if acc_t and acc_t not in name_l and acc_t not in cat_l:
+                    continue
+
+            # 2. Фільтр бюджету
+            if intent.get('max_price') and price > intent['max_price']:
+                continue
+            if intent.get('min_price') and price < intent['min_price']:
                 continue
 
-        if intent.get('calls'):
-            if not any(k in full_text for k in ['дзвін', 'виклики', 'розмов', 'sim', 'сім', 'мікрофон', 'bluetooth call']):
+            # 3. Цільова аудиторія (Чоловічі / Жіночі / Дитячі)
+            aud = intent.get('audience')
+            type_field = (
+                str(a_raw.get('Тип', '')) + ' ' +
+                str(a_raw.get('Стать', '')) + ' ' +
+                str(a_raw.get('Для чоловіків', '')) + ' ' +
+                str(a_raw.get('Для жінок', '')) + ' ' +
+                str(a_raw.get('Хлопчики', '')) + ' ' +
+                str(a_raw.get('Дівчата', '')) + ' ' +
+                cat_l + ' ' + name_l
+            ).casefold()
+
+            if aud == 'kids':
+                if not any(w in type_field or w in desc_l for w in ['дитяч', 'дітей', 'хлопчик', 'дівчат', 'baby', 'q100']):
+                    continue
+            elif aud == 'women':
+                if 'дитяч' in type_field:
+                    continue
+                if not any(w in type_field for w in ['жіноч', ' для жінок', 'унісекс']):
+                    continue
+            elif aud == 'men':
+                if 'дитяч' in type_field:
+                    continue
+                if 'жіноч' in type_field and 'чоловіч' not in type_field:
+                    continue
+
+            # 4. Тип механізму / категорії (Смарт / Механіка / Кварц)
+            w_type = intent.get('watch_type')
+            mech_field = (
+                str(a_raw.get('Механізм', '')) + ' ' +
+                str(a_raw.get('Тип механізму', '')) + ' ' +
+                str(a_raw.get('Тип пристрою', '')) + ' ' +
+                cat_l + ' ' + name_l
+            ).casefold()
+
+            is_smart_item = any(w in mech_field or w in pos_attrs_str for w in ['смарт', 'smart', 'розумн', 'фітнес', 'пульсометр', 'bluetooth', 'android'])
+            is_mech_item = 'механ' in mech_field or 'автозавод' in mech_field
+
+            if w_type == 'smart' and not is_smart_item:
+                continue
+            elif w_type == 'mechanical' and (not is_mech_item or is_smart_item):
+                continue
+            elif w_type == 'quartz' and (is_smart_item or is_mech_item):
                 continue
 
-        # 2. Бали відповідності
-        score = 0
-        if intent.get('style') == 'sport' and any(k in full_text for k in ['спорт', 'sport', 's-shock', 'секундомір']):
-            score += 10
-        if intent.get('style') == 'classic' and any(k in full_text for k in ['класич', 'елегант']):
-            score += 10
-        if intent.get('style') == 'tactical' and any(k in full_text for k in ['тактич', 'військов', 'мілітарі', 'amst']):
-            score += 10
+            # 5. Жорсткі функціональні вимоги (у strict_mode)
+            if strict_mode:
+                if intent.get('brand'):
+                    b = intent['brand']
+                    if b not in vendor_l and b not in name_l:
+                        continue
 
-        if intent.get('waterproof') and any(k in full_text for k in ['плавання', 'басейн', '5 атм', '10 атм', '50 м', '100 м', 'водонепроник']):
-            score += 15
+                if intent.get('calls'):
+                    call_ok = any(w in pos_attrs_str or w in desc_l for w in [
+                        'дзвін', 'виклик', 'розмов', 'підтримка sim-карти: є',
+                        'можливість розмовляти: так', 'окрема сім', 'сім-карт'
+                    ])
+                    if not call_ok:
+                        continue
 
-        if intent.get('skeleton') and any(k in full_text for k in ['скелетон', 'skeleton', 'прозора задня кришка']):
-            score += 10
+                if intent.get('gps'):
+                    gps_ok = any(w in pos_attrs_str or w in name_l or w in desc_l for w in [
+                        'gps', 'місцерозташування', 'відстежування', 'кнопка sos'
+                    ])
+                    if not gps_ok:
+                        continue
 
-        if intent.get('steel') and any(k in full_text for k in ['сталев', 'метал', 'сталь']):
-            score += 8
-        if intent.get('leather') and any(k in full_text for k in ['шкірян', 'кожан']):
-            score += 8
+                if intent.get('waterproof') == 'swimming':
+                    wp_val = str(a_raw.get('Водостійкість', '')).casefold()
+                    if not any(w in wp_val or w in desc_l for w in ['плавання', '5 атм', '10 атм', '50 м', '100 м', '5 atm', '10 atm']):
+                        continue
 
-        scored.append((score, p))
+                if intent.get('strap'):
+                    st_val = (str(a_raw.get('Матеріал ремінця', '')) + ' ' + name_l).casefold()
+                    if intent['strap'] == 'leather' and 'шкір' not in st_val:
+                        continue
+                    if intent['strap'] == 'steel' and not any(w in st_val for w in ['стал', 'метал', 'титан']):
+                        continue
+                    if intent['strap'] == 'rubber' and not any(w in st_val for w in ['каучук', 'силікон', 'полімер', 'rubber']):
+                        continue
 
-    # Сортування: найбільше балів, диверсифікація
-    scored.sort(key=lambda t: (-t[0], t[1]['price']))
+            # =========================================================
+            # НАРАХУВАННЯ БАЛІВ РЕЛЕВАНТНОСТІ (ВАГОВИЙ ІНДЕКС ЯК У GOOGLE)
+            # =========================================================
+            score = 0
 
+            # Бренд (100 балів)
+            if intent.get('brand') and (intent['brand'] in vendor_l or intent['brand'] in name_l):
+                score += 100
+
+            # Стиль (40 балів)
+            st = intent.get('style')
+            if st == 'tactical' and any(w in pos_attrs_str or w in desc_l or w in name_l for w in ['тактич', 'військов', 'мілітарі', 'amst', 'north edge', 's-shock']):
+                score += 45
+            elif st == 'sport' and any(w in pos_attrs_str or w in cat_l or w in name_l for w in ['спорт', 'sport', 's-shock', 'skmei', 'секундомір']):
+                score += 40
+            elif st == 'classic' and any(w in pos_attrs_str or w in cat_l or w in desc_l for w in ['класич', 'елегант']):
+                score += 40
+            elif st == 'patriotic' and any(w in pos_attrs_str or w in cat_l or w in name_l or w in desc_l for w in ['патріот', 'тризуб', 'україн']):
+                score += 50
+
+            # Спеціальні характеристики (по 35 балів)
+            if intent.get('calls') and any(w in pos_attrs_str or w in desc_l for w in ['дзвін', 'розмов', 'sim', 'сім']):
+                score += 45
+            if intent.get('gps') and any(w in pos_attrs_str or w in name_l for w in ['gps', 'sos']):
+                score += 45
+            if intent.get('skeleton') and any(w in pos_attrs_str or w in desc_l or w in cat_l for w in ['скелетон', 'прозора', 'видно роботу']):
+                score += 40
+            if intent.get('autowind') and 'автозавод' in pos_attrs_str:
+                score += 35
+            if intent.get('health') and any(w in pos_attrs_str or w in desc_l for w in ['пульс', 'крокомір', 'сон', 'фітнес']):
+                score += 35
+            if intent.get('roman') and 'римські' in pos_attrs_str:
+                score += 35
+            if intent.get('arabic') and 'арабські' in pos_attrs_str:
+                score += 35
+            if intent.get('backlight') and any(w in pos_attrs_str for w in ['фосфор', 'люмінесцент', 'підсвічування']):
+                score += 35
+            if intent.get('shape') == 'rectangular' and 'прямокутн' in pos_attrs_str:
+                score += 35
+            elif intent.get('shape') == 'round' and 'кругл' in pos_attrs_str:
+                score += 20
+            if intent.get('japanese') and any(w in pos_attrs_str or w in desc_l for w in ['япон', 'miyota']):
+                score += 40
+            if intent.get('chrono') and any(w in pos_attrs_str for w in ['хронограф', 'секундомір', 'будильник', 'дата']):
+                score += 25
+            if intent.get('color') and (intent['color'] in pos_attrs_str or intent['color'] in name_l):
+                score += 30
+
+            # Точний збіг за ключовими словами запиту
+            for kw in intent.get('keywords', []):
+                if kw == sku_l:
+                    score += 120
+                elif kw in name_l or kw in vendor_l:
+                    score += 30
+                elif kw in pos_attrs_str or kw in cat_l:
+                    score += 15
+                elif kw in desc_l:
+                    score += 5
+
+            # Бонус за повноту заповнених характеристик
+            score += min(len(pos_attrs), 15)
+
+            scored.append((score, p))
+
+        return scored
+
+    # Спочатку шукаємо у суворому режимі (Strict)
+    candidates = filter_and_score(strict_mode=True)
+    # Якщо за всіма жорсткими умовами 0 збігів — послаблюємо другорядні умови, зберігаючи категорію і стать!
+    if not candidates:
+        candidates = filter_and_score(strict_mode=False)
+
+    candidates.sort(key=lambda t: (-t[0], -float(t[1]['price'])))
+
+    # Диверсифікація брендів (щоб не показувати 3 однакові годинники одного бренду, якщо не просили конкретний бренд)
     selected = []
     seen_vendors = set()
-    for _, item in scored:
-        v = (item.get('vendor') or 'zorro').casefold()
-        if v not in seen_vendors:
-            selected.append(item)
-            seen_vendors.add(v)
+    seen_names = set()
+
+    for score, item in candidates:
+        base_name = re.sub(r'\s+(ii|iii|new|\d+)$', '', item['name'].casefold()).strip()
+        if base_name in seen_names:
+            continue
+
+        v = (item.get('vendor') or item['name'].split()[0]).casefold()
+        if not intent.get('brand') and v in seen_vendors and len(candidates) > limit * 2:
+            continue
+
+        selected.append(item)
+        seen_vendors.add(v)
+        seen_names.add(base_name)
         if len(selected) >= limit:
             break
 
     if len(selected) < limit:
-        for _, item in scored:
+        for score, item in candidates:
             if item not in selected:
                 selected.append(item)
             if len(selected) >= limit:
@@ -327,56 +716,105 @@ def select_products(rows, intent, limit=3):
 
     return selected
 
-def gemini(message, products):
+# =====================================================================
+# ПРОДАВЕЦЬ-КОНСУЛЬТАНТ GEMINI (З ПАМ'ЯТТЮ ДІАЛОГУ ТА АРГУМЕНТАЦІЄЮ)
+# =====================================================================
+
+def ask_gemini_consultant(data: ChatInput, products: list[dict], intent: dict) -> str:
     key = os.getenv('GEMINI_API_KEY')
-    if not key or not products:
+    if not key:
         return ''
 
-    facts = [
-        {
-            'name': p['name'],
-            'price': float(p['price']),
-            'vendor': p.get('vendor', 'ZORRO'),
-            'features': list((p.get('attributes') or {}).items())[:4]
-        }
-        for p in products
-    ]
-
-    try:
-        r = requests.post(
-            'https://generativelanguage.googleapis.com/v1beta/models/'
-            + os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
-            + ':generateContent',
-            headers={'x-goog-api-key': key},
-            json={
-                'systemInstruction': {
-                    'parts': [{
-                        'text': (
-                            'Ти досвідчений продавець-консультант магазину годинників ZORRO (zorro.com.ua). '
-                            'Відповідай виключно українською мовою. '
-                            'Твоя мета — допомогти клієнту визначитися з вибором. '
-                            'Опиши в 1-2 реченнях, чому відібрані варіанти підходять під його запит. '
-                            'Не перераховуй ціни та назви, оскільки графічні картки додаються системою. '
-                            'В кінці обов\'язково постав одне коротке ввічливе відкрите запитання.'
-                        )
-                    }]
-                },
-                'contents': [{
-                    'role': 'user',
-                    'parts': [{
-                        'text': f"Запит клієнта: {message}\nПідібрані моделі: {json.dumps(facts, ensure_ascii=False)}"
-                    }]
-                }]
-            },
-            timeout=10
+    facts = []
+    for idx, p in enumerate(products, 1):
+        _, pos_attrs = build_positive_index(p)
+        # Вибираємо найцінніші характеристики для аргументації продавця
+        priority_keys = (
+            'Механізм', 'Тип механізму', 'Характеристики механізму',
+            'Водостійкість', 'Матеріал корпусу', 'Матеріал ремінця',
+            'Скло', 'Функції', 'Особливості', 'Підтримка Sim-карти',
+            'Можливість розмовляти', 'Пульсометр', 'Діаметр', 'Розміри, мм',
+            ' Колір корпусу', 'Основний колір циферблата', 'Гарантія'
         )
-        r.raise_for_status()
-        return ''.join(t.get('text', '') for t in r.json()['candidates'][0]['content']['parts']).strip()
-    except Exception:
-        LOG.exception('Помилка Gemini API')
-        return ''
+        picked_specs = {k: v for k, v in pos_attrs.items() if k in priority_keys}
+        if len(picked_specs) < 5:
+            for k, v in list(pos_attrs.items())[:8]:
+                picked_specs.setdefault(k, v)
 
-def product_html(p):
+        facts.append({
+            'номер': idx,
+            'назва': p['name'],
+            'бренд': p.get('vendor') or 'ZORRO',
+            'ціна_грн': int(p['price']),
+            'категорія': p.get('category', ''),
+            'характеристики': picked_specs,
+            'короткий_опис': (p.get('description') or '')[:220]
+        })
+
+    history_text = ''
+    if data.history:
+        recent = data.history[-6:]
+        history_lines = []
+        for m in recent:
+            role_label = 'Покупець' if m.role in ('user', 'human') else 'Консультант'
+            clean_c = clean_html_tags(m.content)[:350]
+            history_lines.append(f"{role_label}: {clean_c}")
+        history_text = "\n".join(history_lines)
+
+    system_prompt = (
+        "Ти — найкращий експерт і продавець-консультант інтернет-магазину годинників ZORRO (zorro.com.ua).\n"
+        "Твоє завдання — професійно проконсультувати клієнта та допомогти йому обрати і купити годинник.\n\n"
+        "ПРАВИЛА РОБОТИ:\n"
+        "1. Спілкуйся живою, привітною українською мовою як справжній фахівець годинникової справи.\n"
+        "2. Опирайся ВИКЛЮЧНО на передані 'Перевірені товари та їхні характеристики'. Нічого не вигадуй.\n"
+        "3. Коротко і переконливо розкажи про кожну з підібраних моделей (по 1 реченню на модель: для кого підійде, який механізм, водостійкість, скло чи ключова фішка).\n"
+        "4. Якщо покупець просить 'Опис моделей' або 'Порівняй моделі' — зроби чітке експертне порівняння цих 3-х варіантів між собою (у чому різниця в захисті, механізмі, матеріалах) і порадь, який обрати.\n"
+        "5. Не вставляй URL-посилання (графічні картки з кнопкою 'Купити' автоматично показуються прямо під твоїм текстом).\n"
+        "6. Наприкінці відповіді обов'язково постав одне влучне питання для закриття угоди (наприклад, яка з моделей найбільше сподобалась візуально, або запропонуй натиснути 'Купити' чи 'Замовити дзвінок менеджера')."
+    )
+
+    user_prompt = (
+        f"Історія розмови:\n{history_text or 'Початок діалогу'}\n\n"
+        f"Сторінка, яку зараз переглядає клієнт: {data.current_product or 'Каталог магазину'}\n"
+        f"Поточне повідомлення клієнта: {data.message}\n\n"
+        f"Перевірені товари з бази ZORRO (картки яких виведені під твоєю відповіддю):\n"
+        f"{json.dumps(facts, ensure_ascii=False, indent=2)}"
+    )
+
+    payload = {
+        'systemInstruction': {'parts': [{'text': system_prompt}]},
+        'contents': [{'role': 'user', 'parts': [{'text': user_prompt}]}],
+        'generationConfig': {'temperature': 0.25, 'maxOutputTokens': 600}
+    }
+
+    for model_name in CANDIDATE_MODELS:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+            r = requests.post(url, json=payload, timeout=14)
+            if r.status_code == 200:
+                parts = r.json()['candidates'][0]['content']['parts']
+                text = ''.join(t.get('text', '') for t in parts).strip()
+                if text:
+                    return text
+        except Exception as e:
+            LOG.warning(f"Модель {model_name} не відповіла: {e}")
+            continue
+
+    # Розумна резервна консультація на базі реальних характеристик (якщо API Gemini перевантажене)
+    lines = ["Я підібрав для вас найкращі варіанти з нашого каталогу за вашими критеріями:"]
+    for f in facts:
+        specs = f['характеристики']
+        spec_summary = ", ".join(f"{k.lower()}: {v}" for k, v in list(specs.items())[:3])
+        lines.append(f"• {f['назва']} — надійна модель бренду {f['бренд']} ({spec_summary}).")
+    lines.append("\nЯка з цих моделей вам найбільше імпонує за дизайном та характеристиками?")
+    return "\n".join(lines)
+
+def format_ai_text(raw_text: str) -> str:
+    escaped = html.escape(raw_text)
+    escaped = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', escaped)
+    return escaped.replace('\n', '<br>')
+
+def product_html(p: dict) -> str:
     name = html.escape(p['name'])
     raw_url = (p.get('url') or '').strip()
     if not raw_url or raw_url.rstrip('/') == 'https://zorro.com.ua':
@@ -386,8 +824,17 @@ def product_html(p):
     price_val = int(p['price']) if p.get('price') else 0
     vendor = html.escape(p.get('vendor') or 'ZORRO')
 
-    attrs = p.get('attributes') or {}
-    short_specs = ' • '.join([f"{k}: {v}" for k, v in list(attrs.items())[:3]]) if attrs else (p.get('description', '')[:90] + '...')
+    _, pos_attrs = build_positive_index(p)
+    display_keys = ('Механізм', 'Водостійкість', 'Матеріал ремінця', 'Матеріал корпусу', 'Скло', 'Функції', 'Діаметр')
+    specs_list = [f"{k}: {pos_attrs[k]}" for k in display_keys if k in pos_attrs]
+    if len(specs_list) < 3:
+        for k, v in pos_attrs.items():
+            if k not in ('Гарантія', 'Фабрика зборки', 'Інструкція') and f"{k}: {v}" not in specs_list:
+                specs_list.append(f"{k}: {v}")
+            if len(specs_list) >= 3:
+                break
+
+    short_specs = html.escape(' • '.join(specs_list[:3])) if specs_list else html.escape((p.get('description') or '')[:95] + '...')
 
     return f"""
     <div style="box-sizing:border-box; width:100%; background:#ffffff; border:1px solid #e2e5e8; border-radius:12px; padding:12px; margin-top:10px; box-shadow:0 1px 4px rgba(0,0,0,0.06); text-align:left;">
@@ -402,101 +849,4 @@ def product_html(p):
           </a>
           <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px;">
             <span style="font-size:16px; font-weight:700; color:#111;">{price_val} ₴</span>
-            <a href="{url}" target="_self" style="background:#00a046; color:#ffffff; padding:5px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none; display:inline-block;">Купити</a>
-          </div>
-        </div>
-      </div>
-      <div style="font-size:11.5px; color:#555; margin-top:8px; line-height:1.35; border-top:1px dashed #e5e5e5; padding-top:6px;">
-        {short_specs}
-      </div>
-      <div style="display:flex; gap:14px; margin-top:8px; padding-top:2px;">
-        <span class="ai-card-action" data-action="similar" data-name="{name}" style="cursor:pointer; font-size:11.5px; color:#00a046; font-weight:500; display:flex; align-items:center; gap:4px;">
-          🔍 Схожі товари
-        </span>
-        <span class="ai-card-action" data-action="desc" data-name="{name}" style="cursor:pointer; font-size:11.5px; color:#666; display:flex; align-items:center; gap:4px;">
-          📄 Опис товару
-        </span>
-      </div>
-    </div>
-    """
-
-@app.get('/')
-def root():
-    return {'status': 'ok', 'version': 'fast-v3'}
-
-@app.get('/api/sync-catalog')
-def sync_endpoint():
-    try:
-        refresh()
-        return {'status': 'success', 'message': 'Каталог успішно синхронізовано'}
-    except Exception as e:
-        return {'status': 'error', 'message': str(e)}
-
-@app.post('/api/chat')
-def chat(data: ChatInput):
-    try:
-        conn = db()
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute('''
-                    SELECT name, category, price, available, vendor, description, url, image, attributes
-                    FROM zorro_products_v2
-                    WHERE available=TRUE
-                ''')
-                rows = [dict(x) for x in cur.fetchall()]
-        finally:
-            conn.close()
-    except Exception:
-        LOG.exception('Помилка читання з бази')
-        return {'reply': 'Каталог тимчасово недоступний. Спробуйте через хвилину.'}
-
-    if not rows:
-        return {'reply': 'Каталог завантажується, будь ласка, зачекайте кілька секунд.'}
-
-    intent = get_intent(data)
-    picks = select_products(rows, intent, limit=3)
-
-    chips_html = """
-    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; padding-top:6px; border-top:1px solid #f0f0f0;">
-      <button class="ai-chip" data-msg="Розкажи детальніше опис та характеристики цих моделей">📄 Опис моделей</button>
-      <button class="ai-chip" data-msg="Порівняй ці моделі між собою">⚖️ Порівняти моделі</button>
-      <button class="ai-chip" data-action="call-modal" style="background:#00a046; color:#fff; border-color:#00a046; font-weight:600;">📞 Замовити дзвінок менеджера</button>
-    </div>
-    """
-
-    if not picks:
-        return {
-            'reply': (
-                'Не вдалося знайти моделі, які повністю відповідають усім заданим критеріям. '
-                'Спробуйте змінити бюджет або уточнити інший стиль, і я підберу чудові варіанти!'
-                + chips_html
-            )
-        }
-
-    ai_text = gemini(data.message, picks) or 'Ось чудові варіанти за вашим запитом. Яка з цих моделей вам найбільше до вподоби?'
-    full_output = f"<div style='line-height:1.4;'>{html.escape(ai_text).replace(chr(10), '<br>')}</div>"
-    full_output += "".join(product_html(p) for p in picks)
-    full_output += chips_html
-
-    return {'reply': full_output}
-
-@app.post('/api/callback')
-def callback(data: CallbackInput):
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    chat_id = os.getenv('TELEGRAM_CHAT_ID')
-
-    if not token or not chat_id:
-        return {'status': 'error', 'reply': 'Сервіс заявок тимчасово ненастроєний.'}
-
-    try:
-        msg = f"📞 <b>Новий запит із чату ZORRO:</b> <code>{data.phone}</code>\n<b>Контекст:</b> {data.message}"
-        r = requests.post(
-            f'https://api.telegram.org/bot{token}/sendMessage',
-            json={'chat_id': chat_id, 'text': msg, 'parse_mode': 'HTML'},
-            timeout=8
-        )
-        r.raise_for_status()
-        return {'status': 'success', 'reply': 'Дякуємо! Номер передано менеджеру, ми зателефонуємо вам найближчим часом.'}
-    except Exception:
-        LOG.exception('Помилка відправки в Telegram')
-        return {'status': 'error', 'reply': 'Не вдалося надіслати заявку. Зателефонуйте нам напряму.'}
+            <a href="{url}" target="_self" style="background:#00a046;
