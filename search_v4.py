@@ -35,7 +35,7 @@ def _field_match(attrs: dict, field: str, wanted: str) -> bool:
     # as confirmation of the positive term inside it.
     if value.startswith(("без ", "не ", "without ", "no ", "немає ", "відсутн")):
         return False
-    return expected == value or bool(re.search(r"(?<!\\w)" + re.escape(expected) + r"(?!\\w)", value))
+    return expected == value or bool(re.search(r"(?<!\w)" + re.escape(expected) + r"(?!\w)", value))
 
 def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
     """SQL first: live inventory, price, vendor/category; then exact attribute rules and ranking.
