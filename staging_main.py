@@ -16,6 +16,18 @@ import main as production_module
 
 LOG = logging.getLogger("zorro.staging")
 app = production_module.app
+_ORIGINAL_DB = production_module.db
+
+
+def _read_only_db():
+    """Force SQL read-only at the PostgreSQL session level before queries."""
+    conn = _ORIGINAL_DB()
+    try:
+        conn.set_session(readonly=True)
+    except Exception:
+        conn.close()
+        raise
+    return conn
 
 
 def verify_staging_config() -> tuple[str, str]:
@@ -33,7 +45,13 @@ def verify_staging_config() -> tuple[str, str]:
     except (ValueError, AttributeError) as exc:
         raise RuntimeError("Staging requires a separate DATABASE_URL") from exc
 
-    if not db_name or not re.search(r"(?:^|[_-])(staging|stage|test)(?:$|[_-])", db_name, re.I):
+    existing_readonly = os.getenv("ZORRO_USE_EXISTING_DB_READ_ONLY") == "1"
+    if existing_readonly:
+        if db_name != "zorro_db":
+            raise RuntimeError("Read-only existing-database mode only permits the verified zorro_db")
+        if os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") != "0":
+            raise RuntimeError("Production database is read-only: catalog sync must be disabled")
+    elif not db_name or not re.search(r"(?:^|[_-])(staging|stage|test)(?:$|[_-])", db_name, re.I):
         raise RuntimeError("Refusing to run: staging database name must contain staging/stage/test")
     if os.getenv("ZORRO_STAGING_DB_NAME") != db_name:
         raise RuntimeError("Staging DB name does not match ZORRO_STAGING_DB_NAME")
@@ -51,6 +69,11 @@ production_module.send_telegram_notification = lambda phone, message="": False
 
 def staging_startup() -> None:
     verify_staging_config()
+    if os.getenv("ZORRO_USE_EXISTING_DB_READ_ONLY") == "1":
+        production_module.db = _read_only_db
+        LOG.warning("Existing zorro_db mounted in read-only mode; all catalog writes disabled")
+        return
+    production_module.db = _ORIGINAL_DB
     if os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") == "1":
         LOG.warning("Starting catalog sync on the confirmed staging-only PostgreSQL")
         threading.Thread(target=production_module.worker, daemon=True).start()
@@ -71,4 +94,5 @@ def staging_status():
         "catalog_sync_enabled": os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") == "1",
         "gemini_key_configured": bool(os.getenv("GEMINI_API_KEY")),
         "live_customer_notifications": False,
+        "existing_database_read_only": os.getenv("ZORRO_USE_EXISTING_DB_READ_ONLY") == "1",
     }
