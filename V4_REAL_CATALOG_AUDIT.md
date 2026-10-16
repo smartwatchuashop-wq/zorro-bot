@@ -36,3 +36,17 @@ Staging verification currently uses GitHub Actions' disposable isolated PostgreS
 The production database's Render free-tier expiry is shown as **2026-11-11**. Plan a migration/upgrade before that deadline.
 
 As of the latest successful GitHub Actions run, **69 tests passed**. Deployment on a new Render service remains pending because the separate persistent database is not available on the free plan.
+
+## Read-only live-query results (2026-10-16, existing `zorro_db`)
+
+All queries below were executed via the Render plugin using transactions that are **read-only**. No inventory, prices, PostgreSQL schema, or deployed services were changed.
+
+- Of **1,035** total products, **752** are sellable (`available = true`, price positive and product URL present).
+- **634** sellable products are watches; **118** are straps, accessories, and other non-watch categories which must not be returned by watch recommendations.
+- **235** matching men's watches under 2,000 UAH with a confirmed non-leather strap (the matching subset has prices 495–1,989 UAH).
+- **9** smartwatches under 2,000 UAH with the explicit supplier attribute `Можливість розмовляти=Так` (the matching subset has prices 1,695–1,989 UAH).
+- In the smart-watch category, the supplier field `Можливість розмовляти` contains `Так` for 114 records, `Ні` for 13, and is missing for 7. These are all-catalog counts; they include unavailable models.
+- Four observed live identifiers sampled for cross-checking: `3718` (Skmei Popular Silver 1123S, 595 UAH, steel), `3793` (Skmei Ribas, 595 UAH, steel), `3949` (Smart Space Pro, 1,695 UAH, calls confirmed), `3938` (Smart Expert Nano Steel, 1,975 UAH, calls confirmed).
+- Database has **864** watch-category records in total, including **230** unavailable watches; 7 watch records lack the supplier strap-material key.
+
+These are **read-only data validation observations**, not an end-to-end test of the v4 HTTP API, Gemini model or browser widget. End-to-end tests need a separate web-service deployment configured with `ZORRO_USE_EXISTING_DB_READ_ONLY=1` and `ZORRO_STAGING_SYNC_ENABLED=0` (see `V4_STAGING_CHECKLIST.md`). Never deploy the staging entrypoint over the existing production Render service.
