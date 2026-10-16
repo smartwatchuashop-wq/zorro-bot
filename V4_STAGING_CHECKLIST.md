@@ -7,7 +7,27 @@
 2. Use a **separate PostgreSQL database and DATABASE_URL**. Never connect staging to the production PostgreSQL: `main.py` has a synchronization worker that WRITES catalog rows and availability.
 3. Configure a Gemini key in the staging environment only. Do not commit secrets to GitHub.
 4. Disable real customer notifications/callbacks in staging or route them only to a controlled test recipient.
-5. Let the staging catalog sync from the public feed; verify `GET /api/catalog-status` reports a sensible product count and latest sync.
+5. With synchronization explicitly enabled on the isolated database, let staging sync from the public feed; verify `GET /api/catalog-status` reports a sensible product count and latest sync.
+
+### Exact Render staging service configuration
+
+Create a new PostgreSQL datastore named clearly for staging. Use a database name like `zorro_staging_db`; a separate user and separate host are preferred. **Never copy the production DATABASE_URL.**
+
+New staging web service:
+- **Repository / branch:** `smartwatchuashop-wq/zorro-bot` / `zorro-hybrid-search-v4`.
+- **Build command:** `pip install -r requirements.txt`.
+- **Start command:** `uvicorn staging_main:app --host 0.0.0.0 --port $PORT` (**not** `main:app`).
+- **Environment variables:**
+  - `ZORRO_ENV=staging`
+  - `DATABASE_URL=<the NEW staging PostgreSQL internal URL>`
+  - `ZORRO_STAGING_DB_NAME=<exact DB name from that URL>`
+  - `ZORRO_STAGING_DB_HOST=<exact DB hostname from that URL>`
+  - `ZORRO_STAGING_SYNC_ENABLED=0` (initially; read-only startup, no catalog writer)
+  - `GEMINI_API_KEY=<test key>` (optional for initial setup; required for real model evaluation)
+- **Never set production Telegram tokens** on the staging service. The code blocks callbacks in staging even if tokens are accidentally inherited.
+- Before first catalog sync, verify the *actual* Render datastore linked to `DATABASE_URL` is not production. After verifying, change `ZORRO_STAGING_SYNC_ENABLED=1` on **staging only** and redeploy this staging service; the existing catalog worker will import public feed rows into the new DB.
+- `GET /api/staging-status` reports whether the test service is configured for sync and Gemini, without showing secrets.
+- Remember: matching the database name/hostname is a second-line safeguard, **not** a substitute for verifying Render's database resource identity.
 
 ## 2. Automated CI
 - Workflow `.github/workflows/v4-tests.yml` starts a disposable PostgreSQL 16 container and runs mocked conversation tests, real SQL/JSONB tests, API contract tests, and Node.js syntax checks for `zorro_widget_v4.html`.
