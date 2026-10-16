@@ -22,11 +22,40 @@ def _term_match(text: str, token: str) -> bool:
 
 NEGATIVE_VALUES = {"ні", "нет", "немає", "отсутствует", "відсутня", "відсутній", "не підтримується", "не підтримує", "none", "false", "0", "-"}
 
+# Supplier values and customer requests often use different inflections.
+# Keep this small, explicit and testable; never treat generic metal as steel.
+MATERIAL_PATTERNS = {
+    "leather": r"шкір|кожан|екошкір|leather|замш",
+    "steel": r"сталев|сталь|нержавіюч|нержавейк|stainless\\s+steel|\\bsteel\\b",
+    "silicone": r"силікон|силикон|silicon",
+    "rubber": r"каучук|гумов|резин|rubber",
+    "titanium": r"титан|titanium",
+    "metal": r"метал|metal",
+    "fabric": r"текстил|тканин|нейлон|fabric|nylon",
+    "ceramic": r"керамік|керамик|ceramic",
+    "plastic": r"пластик|полімер|пластмасс|plastic"
+}
+
+def _material_kinds(value: str) -> set[str]:
+    v = normalize(value)
+    if not v or v in NEGATIVE_VALUES:
+        return set()
+    return {key for key, pattern in MATERIAL_PATTERNS.items()
+            if re.search(pattern, v)}
+
 def _field_match(attrs: dict, field: str, wanted: str) -> bool:
     value = normalize(attrs.get(field, ""))
     expected = normalize(wanted)
     if not value or not expected or value in NEGATIVE_VALUES:
         return False
+    if any(x in normalize(field) for x in ("матеріал ремін", "матеріал браслет", "strap material")):
+        wanted_kinds = _material_kinds(expected)
+        if len(wanted_kinds) == 1:
+            actual_kinds = _material_kinds(value)
+            requested = next(iter(wanted_kinds))
+            if requested == "metal":
+                return bool(actual_kinds & {"metal", "steel", "titanium"})
+            return requested in actual_kinds
     if expected in ("так", "є", "yes", "true"):
         return value in ("так", "є", "yes", "true", "підтримується", "присутня", "присутній")
     if expected in ("ні", "немає", "no", "false"):
