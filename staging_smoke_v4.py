@@ -34,13 +34,16 @@ def run_smoke() -> None:
             raise RuntimeError("Gemini sales answer failed: deterministic fallback returned")
         if len(reply) < 25:
             raise RuntimeError("Gemini response is unexpectedly short")
-        with main.db() as conn:
+        conn = main.db()
+        try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     "SELECT site_id, name, category, price, available, url, attributes "
                     "FROM zorro_products_v2 WHERE site_id=ANY(%s)", (ids,)
                 )
                 rows = {str(p["site_id"]): dict(p) for p in cur.fetchall()}
+        finally:
+            conn.close()
         if len(rows) != len(set(ids)):
             raise RuntimeError("Some returned catalog IDs were not verified")
         for pid in ids:
