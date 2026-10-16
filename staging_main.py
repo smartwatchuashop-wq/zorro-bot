@@ -118,6 +118,14 @@ def verify_staging_config() -> tuple[str, str]:
 production_module.send_telegram_notification = lambda phone, message="": False
 
 
+def _run_smoke_with_error_logging() -> None:
+    from staging_smoke_v4 import run_smoke
+    try:
+        run_smoke()
+    except Exception:
+        LOG.exception("GEMINI_SMOKE RESULT=FAIL (inspect logs; no production data changed)")
+
+
 def staging_startup() -> None:
     if _setup_pending():
         if (os.getenv("ZORRO_ENV") != "staging"
@@ -138,6 +146,10 @@ def staging_startup() -> None:
             len(os.getenv("ZORRO_STAGING_ACCESS_TOKEN", "")) >= 24,
             bool(os.getenv("GEMINI_API_KEY")),
         )
+        if os.getenv("ZORRO_STAGING_GEMINI_SMOKE", "0") == "1":
+            if not os.getenv("GEMINI_API_KEY"):
+                raise RuntimeError("Cannot smoke-test Gemini without a configured API key")
+            threading.Thread(target=_run_smoke_with_error_logging, daemon=True).start()
         return
     production_module.db = _ORIGINAL_DB
     if os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") == "1":
