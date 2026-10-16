@@ -39,7 +39,7 @@ class RetrievalTests(unittest.TestCase):
         db=DB([])
         search_products(db,{"max_price":2000})
         self.assertIn("price <= %s",db.cur.sql)
-        self.assertEqual(db.cur.args,[2000])
+        self.assertEqual(db.cur.args,["%годинник%",2000])
     def test_compare_keeps_previous_order(self):
         db=DB([watch("b","Second"),watch("a","First")])
         r=compare_by_ids(db,["a","b"])
@@ -139,6 +139,22 @@ class RetrievalTests(unittest.TestCase):
         db=DB([])
         search_products(db,{})
         self.assertIn("price > 0",db.cur.sql)
+
+    def test_watch_category_restriction_applied_before_ranking(self):
+        db=DB([])
+        search_products(db,{})
+        self.assertIn("LOWER(category) LIKE %s", db.cur.sql)
+        self.assertIn("%годинник%", db.cur.args)
+
+    def test_russian_steel_material_from_real_supplier(self):
+        p=watch("steel_ru","Steel Watch",strap="Стальной")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталевий"}})
+        self.assertEqual([x["site_id"] for x in found],["steel_ru"])
+
+    def test_supplier_tkaneviy_material_matches_fabric(self):
+        p=watch("fabric","Casual",strap="Тканевий")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Тканинний"}})
+        self.assertEqual([x["site_id"] for x in found],["fabric"])
 
     def test_unavailable_item_not_compared(self):
         p=watch("x","Old watch")
