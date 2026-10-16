@@ -155,6 +155,34 @@ class StagingSafetyTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 staging_main.staging_startup()
 
+    def test_staging_chat_is_private_even_with_database_config(self):
+        cfg=dict(CONF,ZORRO_STAGING_ACCESS_TOKEN="A" * 40)
+        with patch.dict(os.environ,cfg,clear=True):
+            with TestClient(staging_main.app) as client:
+                denied=client.post("/api/chat",json={"message":"Доброго дня"})
+                self.assertEqual(denied.status_code,403)
+                self.assertEqual(denied.json()["status"],"forbidden")
+                denied_catalog=client.get("/api/catalog-status")
+                self.assertEqual(denied_catalog.status_code,403)
+
+    def test_missing_staging_secret_blocks_requests(self):
+        cfg=dict(CONF)
+        with patch.dict(os.environ,cfg,clear=True):
+            with TestClient(staging_main.app) as client:
+                response=client.post("/api/chat",json={"message":"Доброго дня"})
+                self.assertEqual(response.status_code,503)
+                self.assertFalse(client.get("/api/staging-status").json()["private_access_ready"])
+
+    def test_valid_secret_allows_safe_callback_endpoint(self):
+        cfg=dict(CONF,ZORRO_STAGING_ACCESS_TOKEN="B" * 40)
+        with patch.dict(os.environ,cfg,clear=True):
+            with TestClient(staging_main.app) as client:
+                response=client.post("/api/callback",json={"phone":"+380990000001"},
+                    headers={"x-zorro-staging-token":"B" * 40})
+                self.assertEqual(response.status_code,200)
+                self.assertEqual(response.json()["status"],"error")
+                self.assertTrue(client.get("/api/staging-status").json()["private_access_ready"])
+
     def test_staging_callback_cannot_send_real_message(self):
         self.assertFalse(main.send_telegram_notification("+380991234567", "test"))
 
