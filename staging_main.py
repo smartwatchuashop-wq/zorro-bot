@@ -64,6 +64,23 @@ def _read_only_db():
     return conn
 
 
+def _verify_live_read_only_catalog() -> int:
+    """SELECT-only probe on the existing database, with SQL-level read-only enforcement."""
+    conn = _read_only_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT current_database(), current_setting('transaction_read_only'), "
+                "COUNT(*) FROM zorro_products_v2"
+            )
+            db_name, readonly, count = cur.fetchone()
+            if db_name != "zorro_db" or readonly != "on":
+                raise RuntimeError("Staging database read-only safety verification failed")
+            return int(count)
+    finally:
+        conn.close()
+
+
 def verify_staging_config() -> tuple[str, str]:
     """Fail closed before any catalog/database background writes."""
     if os.getenv("ZORRO_ENV") != "staging":
@@ -113,7 +130,14 @@ def staging_startup() -> None:
     verify_staging_config()
     if os.getenv("ZORRO_USE_EXISTING_DB_READ_ONLY") == "1":
         production_module.db = _read_only_db
-        LOG.warning("Existing zorro_db mounted in read-only mode; all catalog writes disabled")
+        count = _verify_live_read_only_catalog()
+        LOG.warning(
+            "Existing zorro_db verified read-only with %s catalog products; "
+            "private access ready=%s; Gemini configured=%s",
+            count,
+            len(os.getenv("ZORRO_STAGING_ACCESS_TOKEN", "")) >= 24,
+            bool(os.getenv("GEMINI_API_KEY")),
+        )
         return
     production_module.db = _ORIGINAL_DB
     if os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") == "1":
