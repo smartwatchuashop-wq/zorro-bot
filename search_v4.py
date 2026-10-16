@@ -26,7 +26,7 @@ NEGATIVE_VALUES = {"ні", "нет", "немає", "отсутствует", "в
 # Keep this small, explicit and testable; never treat generic metal as steel.
 MATERIAL_PATTERNS = {
     "leather": r"шкір|кожан|екошкір|leather|замш",
-    "steel": r"сталев|сталь|нержавіюч|нержавейк|stainless\\s+steel|\\bsteel\\b",
+    "steel": r"сталев|сталь|нержавіюч|нержавейк|stainless\s+steel|\bsteel\b",
     "silicone": r"силікон|силикон|silicon",
     "rubber": r"каучук|гумов|резин|rubber",
     "titanium": r"титан|titanium",
@@ -47,6 +47,8 @@ def _field_match(attrs: dict, field: str, wanted: str) -> bool:
     value = normalize(attrs.get(field, ""))
     expected = normalize(wanted)
     if not value or not expected or value in NEGATIVE_VALUES:
+        return False
+    if value.startswith(("без ", "не ", "without ", "no ", "немає ", "відсутн")):
         return False
     if any(x in normalize(field) for x in ("матеріал ремін", "матеріал браслет", "strap material")):
         wanted_kinds = _material_kinds(expected)
