@@ -13,6 +13,37 @@ STOPWORDS = {"годинник", "годинники", "хочу", "покажи
 def normalize(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").casefold()).strip()
 
+# Actual Horoshop categories from the live zorro_db. Gemini frequently uses
+# variants such as "Смартгодинники" or "Чоловічий годинник" instead.
+WATCH_CATEGORIES = {
+    "men": "Чоловічі годинники",
+    "women": "Жіночі годинники",
+    "smart": "Смарт годинники",
+    "kids": "Дитячі годинники",
+    "sports": "Спортивні годинники",
+    "unisex": "Унісекс годинники",
+}
+
+
+def canonical_watch_category(value: str) -> str | None:
+    s = normalize(value).replace("-", " ").replace("_", " ")
+    if not s:
+        return None
+    if "смарт" in s or "smart" in s or "розумн" in s:
+        return WATCH_CATEGORIES["smart"]
+    if "чолов" in s or "муж" in s or "men" == s:
+        return WATCH_CATEGORIES["men"]
+    if "жіноч" in s or "жін" in s or "жен" in s or "women" == s:
+        return WATCH_CATEGORIES["women"]
+    if "дитяч" in s or "діт" in s or "детск" in s or "kids" == s:
+        return WATCH_CATEGORIES["kids"]
+    if "спорт" in s or "sport" in s:
+        return WATCH_CATEGORIES["sports"]
+    if "унісекс" in s or "unisex" in s:
+        return WATCH_CATEGORIES["unisex"]
+    return None
+
+
 def _attr_text(product: dict) -> str:
     attrs = product.get("attributes") or {}
     return " ".join(f"{k} {v}" for k, v in attrs.items() if v is not None).casefold()
@@ -94,8 +125,15 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
         clauses.append("LOWER(vendor) = LOWER(%s)")
         args.append(filters["brand"])
     if filters.get("category"):
-        clauses.append("LOWER(category) LIKE LOWER(%s)")
-        args.append("%" + str(filters["category"]).strip() + "%")
+        canonical = canonical_watch_category(filters["category"])
+        if canonical:
+            clauses.append("category = %s")
+            args.append(canonical)
+        else:
+            # Unsupported explicit categories must not silently turn into
+            # unrestricted recommendations.
+            clauses.append("LOWER(category) LIKE LOWER(%s)")
+            args.append("%" + str(filters["category"]).strip() + "%")
     if filters.get("sku"):
         clauses.append("LOWER(sku) = LOWER(%s)")
         args.append(filters["sku"])
