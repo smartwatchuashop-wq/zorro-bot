@@ -112,10 +112,11 @@ def compare_by_ids(conn, ids: list[str]) -> list[dict]:
     """Use EXACT previously shown products; never launch a new ranking search."""
     if not ids or len(ids) > 20:
         return []
+    ids = [str(x) for x in ids]
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             "SELECT site_id, sku, name, vendor, category, price, available, url, "
             "image, description, attributes FROM zorro_products_v2 "
             "WHERE site_id = ANY(%s)", (ids,))
-        items = {r["site_id"]: dict(r) for r in cur.fetchall()}
-    return [items[x] for x in ids if x in items]
+        items = {str(r["site_id"]): dict(r) for r in cur.fetchall()}
+    return [items[str(x)] for x in ids if str(x) in items]
