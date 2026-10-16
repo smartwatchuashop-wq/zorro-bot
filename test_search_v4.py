@@ -68,6 +68,25 @@ class RetrievalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             search_products(DB([]),{"exclude":{"Матеріал ремінця":"Шкіряний"}})
 
+    def test_male_audience_filter(self):
+        male=watch("1","Skmei чоловічий")
+        female=watch("2","Skmei жіночий")
+        female["category"]="Жіночі годинники"
+        r=search_products(DB([male,female]),{"audience":"men"})
+        self.assertEqual([p["site_id"] for p in r],["1"])
+
+    def test_no_smart_watch_for_quartz_requirement(self):
+        smart=watch("1","Смарт годинник")
+        quartz=watch("2","Кварцовий годинник")
+        r=search_products(DB([smart,quartz]),{"watch_type":"quartz"})
+        self.assertEqual([p["site_id"] for p in r],["2"])
+
+    def test_category_filter_parameterized(self):
+        db=DB([])
+        search_products(db,{"category":"Чоловічі"})
+        self.assertIn("LOWER(category) LIKE LOWER(%s)",db.cur.sql)
+        self.assertIn("%Чоловічі%",db.cur.args)
+
     def test_unknown_filter_rejected(self):
         with self.assertRaises(ValueError):
             search_products(DB([]),{"unsafe_sql":"DROP TABLE"})
