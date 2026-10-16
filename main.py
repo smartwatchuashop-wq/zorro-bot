@@ -850,3 +850,102 @@ def product_html(p: dict) -> str:
           <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px;">
             <span style="font-size:16px; font-weight:700; color:#111;">{price_val} ₴</span>
             <a href="{url}" target="_self" style="background:#00a046;
+color:#ffffff; padding:5px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none;">Купити</a>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:11.5px; color:#555; margin-top:8px; line-height:1.35; border-top:1px dashed #e5e5e5; padding-top:6px;">{short_specs}</div>
+      <div style="display:flex; gap:12px; margin-top:8px;">
+        <span class="ai-card-action" data-action="similar" data-name="{html.escape(p['name'], quote=True)}" style="cursor:pointer;color:#00a046;font-size:11px;">🔍 Схожі товари</span>
+        <span class="ai-card-action" data-action="desc" data-name="{html.escape(p['name'], quote=True)}" style="cursor:pointer;font-size:11px;">📄 Опис товару</span>
+      </div>
+    </div>
+    """
+
+def send_telegram_notification(phone: str, message: str = "") -> bool:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": f"📞 Заявка ZORRO: {phone}\n{message}"},
+            timeout=8
+        )
+        r.raise_for_status()
+        return bool(r.json().get("ok"))
+    except Exception:
+        LOG.exception("Telegram callback failed")
+        return False
+
+@app.get("/")
+def root():
+    return {"status": "ok", "version": "v2-repaired"}
+
+@app.get("/api/catalog-status")
+def catalog_status():
+    try:
+        conn = db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*), COUNT(*) FILTER (WHERE available), MAX(synced_at) FROM zorro_products_v2"
+                )
+                count, available, last_sync = cur.fetchone()
+            return {
+                "status": "ok",
+                "products": count,
+                "available": available,
+                "last_sync": last_sync.isoformat() if last_sync else None
+            }
+        finally:
+            conn.close()
+    except Exception:
+        LOG.exception("Catalog status error")
+        return {"status": "loading_or_error", "message": "Перевірте Render Logs"}
+
+@app.post("/api/chat")
+def chat(data: ChatInput):
+    try:
+        conn = db()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT site_id, name, category, price, available, vendor, description, url, image, attributes, sku FROM zorro_products_v2 WHERE available=TRUE"
+                )
+                rows = [dict(p) for p in cur.fetchall()]
+        finally:
+            conn.close()
+    except Exception:
+        LOG.exception("Catalog query error")
+        return {"reply": "Каталог тимчасово недоступний. Спробуйте трохи пізніше."}
+
+    if not rows:
+        return {"reply": "Каталог ще завантажується. Спробуйте за хвилину."}
+
+    intent = build_intent(data)
+    products = select_products(rows, intent, limit=3)
+
+    if not products:
+        return {"reply": "Не знайшов годинників, які точно відповідають усім вимогам. Що можна змінити у побажаннях?"}
+
+    ai_text = ask_gemini_consultant(data, products, intent)
+    response = "<div style='line-height:1.4;'>" + format_ai_text(ai_text) + "</div>"
+    response += "".join(product_html(p) for p in products)
+    response += """
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;">
+        <button class="ai-chip" data-msg="Розкажи детальніше про ці моделі">📄 Опис моделей</button>
+        <button class="ai-chip" data-msg="Порівняй ці моделі між собою">⚖️ Порівняти моделі</button>
+        <button class="ai-chip" data-action="call-modal">📞 Замовити дзвінок менеджера</button>
+    </div>
+    """
+    return {"reply": response}
+
+@app.post("/api/callback")
+def callback(data: CallbackInput):
+    if not data.phone.strip():
+        return {"status": "error", "reply": "Введіть номер телефону."}
+    if send_telegram_notification(data.phone, data.message):
+        return {"status": "success", "reply": "Дякуємо! Ваш номер передано менеджеру."}
+    return {"status": "error", "reply": "Не вдалося відправити заявку. Зверніться до магазину напряму."}
