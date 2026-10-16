@@ -86,6 +86,8 @@ def handle_chat(data, connect, render_card, format_text):
             ids=[ids[0],ids[2]]
         elif re.search(r"перш\w*\s+(?:і|та)\s+друг",message) and len(ids)>=2:
             ids=[ids[0],ids[1]]
+    if action=="question":
+        return {"reply":"Можу підказати щодо товарів. Для точних умов доставки, оплати, повернення й гарантії потрібно звіритися з правилами магазину; не хочу вводити вас в оману.","state":state}
     conn=connect()
     try:
         if action in ("compare","describe") and ids:
@@ -98,11 +100,10 @@ def handle_chat(data, connect, render_card, format_text):
         conn.close()
     if action in ("compare","describe") and not ids:
         return {"reply":"Спочатку підберімо моделі, які ви хочете порівняти. Який бюджет і які функції важливі?","state":state}
-    if action=="question":
-        return {"reply":"Можу підказати щодо товарів. Для точних умов доставки, оплати, повернення й гарантії потрібно звіритися з правилами магазину; не хочу вводити вас в оману.","state":state}
     if not products:
         return {"reply":"Не знайшов моделей, які підтверджено відповідають усім умовам. Що з вимог можна змінити?","state":{**state,"filters":filters}}
-    state={"filters":filters,"product_ids":[p["site_id"] for p in products]}
+    # Comparing a subset must not erase the previous full shortlist.
+    state={"filters":filters,"product_ids":state.get("product_ids",[]) if action in ("compare","describe") else [str(p["site_id"]) for p in products]}
     answer=ai_sales(data.message,products,history,action)
     if not answer:
         answer="Ось моделі з підтвердженими характеристиками. Можу їх порівняти або допомогти звузити вибір."
