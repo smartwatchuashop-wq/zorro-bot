@@ -33,4 +33,4 @@ jobs:
       - name: Compile v4 modules
         run: python -m py_compile main.py search_v4.py conversation_v4.py test_search_v4.py test_conversation_v4.py test_api_v4.py test_postgres_v4.py
       - name: Run isolated PostgreSQL and mocked dialogue regression tests
-        run: python -m unittest -v test_search_v4.py test_conversation_v4.py test_api_v4.py
+        run: python -m unittest -v test_search_v4.py test_conversation_v4.py test_api_v4.py test_postgres_v4.py
