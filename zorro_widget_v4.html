@@ -1,0 +1,310 @@
+<!-- TEST ONLY: use with v4 backend, do not paste into live Horoshop yet. -->
+<div id="ai-chat-widget" style="position: fixed; bottom: 25px; right: 25px; z-index: 9999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  
+  <div id="ai-chat-prompt" style="display: none; position: absolute; bottom: 58px; right: 0; background: #ffffff; color: #222; padding: 10px 14px; border-radius: 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.15); border: 1px solid #ebebeb; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; animation: zorroFadeIn 0.4s ease forwards; align-items: center; gap: 8px;">
+    <span>✨ Потрібна допомога з вибором?</span>
+    <span id="ai-prompt-close" style="color: #999; font-size: 16px; margin-left: 4px; line-height: 1; cursor: pointer;">&times;</span>
+  </div>
+
+  <button id="ai-chat-toggle" style="background: #111111; color: #fff; border: none; padding: 10px 18px; border-radius: 30px; cursor: pointer; font-weight: 600; font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); display: flex; align-items: center; gap: 8px;">
+    <span style="background: linear-gradient(135deg, #7b2cbf, #9d4edd); width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px;">✦</span>
+    <span>Zorro AI</span>
+    <span style="font-size: 10px; color: #aaa; font-weight: 400; text-transform: uppercase;">beta</span>
+  </button>
+
+  <div id="ai-chat-box" style="display: none; width: 360px; height: 550px; background: #ffffff; border-radius: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); flex-direction: column; overflow: hidden; position: absolute; bottom: 58px; right: 0; border: 1px solid #e5e5e5;">
+    
+    <div style="background: #ffffff; color: #111; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px;">
+        <span style="background: linear-gradient(135deg, #7b2cbf, #9d4edd); color: #fff; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px;">✦</span>
+        <span>Zorro AI</span>
+        <span style="font-size: 10px; color: #888; font-weight: normal;">beta</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span id="ai-chat-reset" title="Очистити чат" style="cursor: pointer; color: #888; font-size: 15px; padding: 2px;">↺</span>
+        <span id="ai-chat-close" title="Закрити" style="cursor: pointer; color: #888; font-size: 18px; padding: 2px 4px;">✕</span>
+      </div>
+    </div>
+
+    <!-- Вікно введення номеру для зворотного дзвінка -->
+    <div id="ai-callback-panel" style="display:none; background: #e8f5e9; border-bottom: 1px solid #c8e6c9; padding: 10px 14px; align-items: center; justify-content: space-between; gap: 8px;">
+      <input type="tel" id="ai-callback-phone" placeholder="Введіть ваш номер: 098..." style="flex:1; padding:7px 10px; border:1px solid #a5d6a7; border-radius:6px; font-size:12px; outline:none;">
+      <button id="ai-callback-submit" style="background:#00a046; color:#fff; border:none; padding:7px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Дзвінок</button>
+      <span id="ai-callback-cancel" style="color:#666; font-size:16px; cursor:pointer; padding:0 4px;">&times;</span>
+    </div>
+
+    <div id="ai-chat-messages" style="flex: 1; padding: 12px; overflow-y: auto; font-size: 13px; background: #fafafa; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth;">
+    </div>
+
+    <div id="ai-search-indicator" style="display:none; padding: 8px 14px; background: #fff; border-top: 1px solid #f0f0f0; font-size: 12px; color: #666; align-items: center; gap: 8px;">
+      <div class="rozetka-dots"><span></span><span></span><span></span></div>
+      <span>Шукаю моделі за запитом...</span>
+    </div>
+
+    <div style="padding: 10px 12px; border-top: 1px solid #eee; display: flex; align-items: center; background: #fff; gap: 6px;">
+      <input type="text" id="ai-chat-input" placeholder="Запитайте в Zorro AI..." style="flex: 1; padding: 9px 12px; border: 1px solid #ddd; border-radius: 20px; outline: none; font-size: 13px; color: #111;">
+      <button id="ai-chat-send" style="background: #111; color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px;">➤</button>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes zorroFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .ai-chip {
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 14px;
+    padding: 6px 11px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: #222;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    transition: all 0.15s ease;
+  }
+  .ai-chip:hover {
+    background: #f3f4f6;
+    border-color: #d1d5db;
+  }
+  .rozetka-dots { display: inline-flex; gap: 4px; align-items: center; }
+  .rozetka-dots span { width: 6px; height: 6px; background: #00a046; border-radius: 50%; animation: rozetkaPulse 1.2s infinite ease-in-out; }
+  .rozetka-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .rozetka-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes rozetkaPulse { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1.1); opacity: 1; } }
+</style>
+
+<script>
+  (function() {
+    var toggleBtn = document.getElementById('ai-chat-toggle');
+    var chatBox = document.getElementById('ai-chat-box');
+    var closeBtn = document.getElementById('ai-chat-close');
+    var resetBtn = document.getElementById('ai-chat-reset');
+    var sendBtn = document.getElementById('ai-chat-send');
+    var inputField = document.getElementById('ai-chat-input');
+    var messagesContainer = document.getElementById('ai-chat-messages');
+    var promptBubble = document.getElementById('ai-chat-prompt');
+    var promptClose = document.getElementById('ai-prompt-close');
+    var searchIndicator = document.getElementById('ai-search-indicator');
+
+    var callbackPanel = document.getElementById('ai-callback-panel');
+    var callbackPhoneInput = document.getElementById('ai-callback-phone');
+    var callbackSubmitBtn = document.getElementById('ai-callback-submit');
+    var callbackCancelBtn = document.getElementById('ai-callback-cancel');
+
+    if (!toggleBtn) return;
+    var STORAGE_KEY_HTML = 'zorro_ai_chat_html';
+
+    function getPageProductData() {
+      var h1 = document.querySelector('h1.product-title') || document.querySelector('h1');
+      if (!h1 || window.location.pathname.length < 5) return null;
+      var title = h1.innerText.trim();
+      if (!title || title.toLowerCase().includes('каталог')) return null;
+
+      var imgEl = document.querySelector('.product-gallery img') || document.querySelector('.gallery-item img') || document.querySelector('img[itemprop="image"]') || document.querySelector('meta[property="og:image"]');
+      var imgSrc = imgEl ? (imgEl.src || imgEl.getAttribute('content') || '') : '';
+
+      var priceEl = document.querySelector('.product-price') || document.querySelector('.price') || document.querySelector('[itemprop="price"]');
+      var priceText = priceEl ? priceEl.innerText.trim() : '';
+
+      return { title: title, image: imgSrc, price: priceText };
+    }
+
+    var pageProduct = getPageProductData();
+
+    function buildGreeting() {
+      var html = '<div style="background: #ffffff; border: 1px solid #ebebeb; padding: 10px 12px; border-radius: 12px; color: #222; max-width: 85%; line-height: 1.4; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">' +
+        'Привіт! Напиши, що шукаєш — підберу, порівняю або знайду найвигідніший варіант.' +
+      '</div>';
+
+      if (pageProduct) {
+        var safeTitle = escapeHtml(pageProduct.title);
+        html += '<div style="margin-top: 8px;">' +
+          '<div style="font-size: 11px; font-weight: 600; color: #777; margin-bottom: 4px;">Товар, який ви переглядаєте:</div>' +
+          '<div style="background:#ffffff; border:1px solid #e2e5e8; border-radius:12px; padding:10px; box-shadow:0 1px 4px rgba(0,0,0,0.05);">' +
+            '<div style="display:flex; gap:10px; align-items:center;">' +
+              (pageProduct.image ? '<img src="' + escapeHtml(pageProduct.image) + '" style="width:54px; height:54px; object-fit:contain; border-radius:6px; background:#f9fafb; border:1px solid #eee; flex-shrink:0;">' : '') +
+              '<div style="flex:1; min-width:0;">' +
+                '<div style="font-weight:600; font-size:12.5px; color:#111; line-height:1.25; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">' + safeTitle + '</div>' +
+                (pageProduct.price ? '<div style="font-weight:700; font-size:13px; color:#111; margin-top:4px;">' + escapeHtml(pageProduct.price) + '</div>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">' +
+              '<button class="ai-chip" data-msg="Розкажи детальніше опис та характеристики ' + safeTitle + '">📄 Опис товару</button>' +
+              '<button class="ai-chip" data-msg="Покажи схожі моделі до ' + safeTitle + '">🔍 Схожі товари</button>' +
+              '<button class="ai-chip" data-action="call-modal" style="background:#00a046; color:#fff; border-color:#00a046; font-weight:600;">📞 Замовити дзвінок</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      } else {
+        html += '<div id="ai-quick-replies" style="margin-top: 8px;">' +
+          '<div style="font-size: 11.5px; font-weight: 600; color: #666; margin-bottom: 6px;">Підказати варіанти?</div>' +
+          '<div style="display: flex; flex-direction: column; gap: 5px;">' +
+            '<button class="ai-chip" data-msg="Які моделі смарт-годинників мають функцію дзвінків?">📞 Смарт-годинники з функцією дзвінків</button>' +
+            '<button class="ai-chip" data-msg="Підбери водонепроникний годинник для активного спорту">🛡️ Водонепроникні для активного спорту</button>' +
+            '<button class="ai-chip" data-msg="Порадь надійні чоловічі моделі до 2000 грн">💰 Чоловічі моделі до 2000 грн</button>' +
+            '<button class="ai-chip" data-action="call-modal" style="background:#00a046; color:#fff; border-color:#00a046; font-weight:600;">📞 Замовити дзвінок менеджера</button>' +
+          '</div>' +
+        '</div>';
+      }
+      return html;
+    }
+
+    var STORAGE_KEY_STATE = 'zorro_ai_v4_state';
+    var STORAGE_KEY_TURNS = 'zorro_ai_v4_turns';
+    // New HTML key deliberately isolates v4 from the old, HTML-only localStorage.
+    STORAGE_KEY_HTML = 'zorro_ai_v4_html';
+    var API_BASE = String(window.ZORRO_AI_API_BASE || 'https://fastapi-qie2.onrender.com').replace(/\/+$/, '');
+    var dialogueState = {filters:{}, product_ids:[]};
+    var chatTurns = [];
+    var busy = false;
+    try {
+      var remembered = JSON.parse(localStorage.getItem(STORAGE_KEY_STATE) || 'null');
+      if (remembered && typeof remembered === 'object' && !Array.isArray(remembered)) dialogueState = remembered;
+      var turns = JSON.parse(localStorage.getItem(STORAGE_KEY_TURNS) || '[]');
+      if (Array.isArray(turns)) chatTurns = turns.filter(function(t) {
+        return t && (t.role === 'user' || t.role === 'assistant') && typeof t.content === 'string';
+      }).slice(-12);
+    } catch(e) { dialogueState = {filters:{},product_ids:[]}; chatTurns = []; }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, function(c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+    }
+    function saveChatState() {
+      try {
+        localStorage.setItem(STORAGE_KEY_HTML, messagesContainer.innerHTML);
+        localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(dialogueState));
+        localStorage.setItem(STORAGE_KEY_TURNS, JSON.stringify(chatTurns.slice(-12)));
+      } catch (_) {}
+    }
+    function scrollChat() { messagesContainer.scrollTop = messagesContainer.scrollHeight; }
+    function setBusy(next) {
+      busy = next;
+      inputField.disabled = next;
+      sendBtn.disabled = next;
+      if (searchIndicator) searchIndicator.style.display = next ? 'flex' : 'none';
+    }
+    function addUserText(text) {
+      var div = document.createElement('div');
+      div.style.cssText = 'align-self:flex-end;max-width:85%;margin-bottom:4px';
+      var span = document.createElement('span');
+      span.style.cssText = 'background:#111;color:#fff;padding:8px 12px;border-radius:12px;display:inline-block;line-height:1.4;overflow-wrap:anywhere';
+      span.textContent = text; // Never interpret buyer input as HTML.
+      div.appendChild(span);
+      messagesContainer.appendChild(div);
+      scrollChat();
+    }
+    function addBotText(text, error) {
+      var div = document.createElement('div');
+      div.style.cssText = 'align-self:flex-start;width:100%;margin-bottom:6px;line-height:1.4;overflow-wrap:anywhere';
+      if (error) {
+        div.style.color = '#b91c1c'; div.textContent = String(text);
+      } else {
+        // /api/chat generates escaped text + known card HTML. Never inject user text here.
+        div.innerHTML = String(text || '');
+      }
+      messagesContainer.appendChild(div);
+      scrollChat();
+    }
+    function loadChatHistory() {
+      var savedHtml = null;
+      try { savedHtml = localStorage.getItem(STORAGE_KEY_HTML); } catch (_) {}
+      messagesContainer.innerHTML = savedHtml && savedHtml.trim() ? savedHtml : buildGreeting();
+      scrollChat();
+    }
+    function openChat() {
+      chatBox.style.display = 'flex';
+      if (promptBubble) promptBubble.style.display = 'none';
+      scrollChat();
+      inputField.focus();
+    }
+    function closeChat() { chatBox.style.display = 'none'; }
+    function openCallbackPanel() { callbackPanel.style.display = 'flex'; callbackPhoneInput.focus(); }
+    function closeCallbackPanel() { callbackPanel.style.display = 'none'; callbackPhoneInput.value = ''; }
+    function requestJson(url, payload) {
+      var controller = new AbortController();
+      var timer = setTimeout(function(){ controller.abort(); }, 65000);
+      return fetch(url, {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload),signal:controller.signal
+      }).then(function(res){
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).finally(function(){ clearTimeout(timer); });
+    }
+    function sendTextMessage(text) {
+      text = String(text || '').trim().slice(0,2000);
+      if (!text || busy) return;
+      var priorHistory = chatTurns.slice(-12);
+      var qr = document.getElementById('ai-quick-replies');
+      if (qr) qr.style.display = 'none';
+      addUserText(text);
+      inputField.value = '';
+      saveChatState();
+      setBusy(true);
+      requestJson(API_BASE + '/api/chat', {
+        message:text,
+        current_product:pageProduct ? pageProduct.title : null,
+        history:priorHistory,
+        state:dialogueState
+      }).then(function(data){
+        if (!data || typeof data.reply !== 'string') throw new Error('Invalid API response');
+        if (data.state && typeof data.state === 'object' && !Array.isArray(data.state)) dialogueState = data.state;
+        chatTurns.push({role:'user', content:text});
+        chatTurns.push({role:'assistant', content:data.reply.replace(/<[^>]*>/g, ' ').replace(/\s+/g,' ').slice(0,700)});
+        chatTurns = chatTurns.slice(-12);
+        addBotText(data.reply, false);
+        saveChatState();
+      }).catch(function(error){
+        addBotText('Зараз немає зв’язку з консультантом. Спробуйте ще раз.', true);
+        console.warn('Zorro AI v4', error);
+      }).finally(function(){ setBusy(false); inputField.focus(); });
+    }
+    messagesContainer.addEventListener('click', function(e){
+      var btn=e.target.closest('.ai-chip,.ai-card-action');
+      if (!btn || busy) return;
+      if (btn.getAttribute('data-action') === 'call-modal') return openCallbackPanel();
+      if (btn.classList.contains('ai-chip')) return sendTextMessage(btn.getAttribute('data-msg'));
+      var action=btn.getAttribute('data-action'), name=btn.getAttribute('data-name');
+      if (!name) return;
+      if (action === 'similar') sendTextMessage('Покажи схожі моделі до ' + name);
+      else if (action === 'desc') sendTextMessage('Розкажи детальніше характеристики та опис ' + name);
+    });
+    callbackCancelBtn.addEventListener('click', closeCallbackPanel);
+    callbackSubmitBtn.addEventListener('click', function(){
+      var phone = callbackPhoneInput.value.replace(/[\s()\-]/g, '').trim();
+      if (!/^(?:\+?380\d{9}|0\d{9})$/.test(phone)) {
+        alert('Введіть, будь ласка, коректний український номер телефону.');return;
+      }
+      callbackSubmitBtn.disabled=true;
+      var context=pageProduct ? 'Переглядає товар: ' + pageProduct.title : 'Замовлення консультації з чату';
+      requestJson(API_BASE + '/api/callback',{phone:phone,message:context}).then(function(data){
+        addBotText(data && data.reply ? data.reply : 'Не вдалося відправити заявку.', true);
+        if (data && data.status==='success') closeCallbackPanel();
+      }).catch(function(){ addBotText('Помилка надсилання заявки. Спробуйте пізніше.',true); })
+      .finally(function(){ callbackSubmitBtn.disabled=false; saveChatState(); });
+    });
+    toggleBtn.addEventListener('click',function(){
+      if(chatBox.style.display==='flex')closeChat();else openChat();
+    });
+    closeBtn.addEventListener('click',closeChat);
+    resetBtn.addEventListener('click',function(){
+      if (busy || !confirm('Очистити історію діалогу?')) return;
+      dialogueState={filters:{},product_ids:[]};chatTurns=[];
+      try {localStorage.removeItem(STORAGE_KEY_HTML);localStorage.removeItem(STORAGE_KEY_STATE);localStorage.removeItem(STORAGE_KEY_TURNS);}catch(_){}
+      messagesContainer.innerHTML=buildGreeting();saveChatState();
+    });
+    sendBtn.addEventListener('click', function(){sendTextMessage(inputField.value);});
+    inputField.addEventListener('keydown',function(e){
+      if(e.key==='Enter'){e.preventDefault();sendTextMessage(inputField.value);}
+    });
+    loadChatHistory();
+  })();
+</script>
+<style>
+@media (max-width: 600px) {
+  #ai-chat-widget {bottom:12px!important;right:12px!important}
+  #ai-chat-box {width:calc(100vw - 24px)!important;height:min(620px,calc(100dvh - 100px))!important}
+}
+</style>
