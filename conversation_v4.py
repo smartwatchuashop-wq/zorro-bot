@@ -68,8 +68,13 @@ def handle_chat(data, connect, render_card, format_text):
     proposed={k:v for k,v in proposed.items() if k in allowed}
     # A new explicit search resets preferences unless it is a follow-up.
     if action=="search":
-        if not ai.get("followup") and not any(w in message for w in ("дешевш","дорожч","а які","ще","тільки")):
+        # Keep constraints unless the buyer explicitly changes them.
+        # Avoid silently dropping the original budget on follow-up questions.
+        if re.search(r"новий пошук|почн(емо|и) спочатку|забудь попередн", message):
             filters={}
+        if "без обмеження бюджету" in message or "будь-яка ціна" in message:
+            filters.pop("max_price",None)
+            filters.pop("min_price",None)
         for k,v in proposed.items():
             if k in ("exclude","must_have") and isinstance(v,dict):
                 filters[k]={**(filters.get(k) or {}),**v}
@@ -81,11 +86,14 @@ def handle_chat(data, connect, render_card, format_text):
             filters["audience"]="women"
         elif re.search(r"дитяч|для дитини", message):
             filters["audience"]="kids"
-        if re.search(r"смарт|smart|розумн\\w* годин", message):
+        if re.search(r"смарт|smart|розумн\w* годин", message):
             filters["watch_type"]="smart"
         # Cheap deterministic safety net for budget if AI misses it.
         found=re.search(r"\bдо\s*(\d[\d ]*)\s*(?:грн|₴)?",message)
         if found: filters["max_price"]=int(found.group(1).replace(" ",""))
+        if re.search(r"\bвід\s*(\d[\d ]*)",message):
+            m=re.search(r"\bвід\s*(\d[\d ]*)",message)
+            filters["min_price"]=int(m.group(1).replace(" ",""))
     # If Gemini fails, do not silently invent an unconstrained catalog recommendation.
     if not ai and action=="search" and not filters and not proposed:
         return {"reply":"Уточніть, будь ласка, тип годинника, бажаний бюджет або важливі функції — і я підберу за перевіреними характеристиками.","state":state}
