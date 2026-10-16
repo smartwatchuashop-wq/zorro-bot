@@ -26,12 +26,12 @@ NEGATIVE_VALUES = {"ні", "нет", "немає", "отсутствует", "в
 # Keep this small, explicit and testable; never treat generic metal as steel.
 MATERIAL_PATTERNS = {
     "leather": r"шкір|кожан|екошкір|leather|замш",
-    "steel": r"сталев|сталь|нержавіюч|нержавейк|stainless\s+steel|\bsteel\b",
+    "steel": r"сталев|сталь|стальн|нержавіюч|нержавейк|stainless\s+steel|\bsteel\b",
     "silicone": r"силікон|силикон|silicon",
     "rubber": r"каучук|гумов|резин|rubber",
     "titanium": r"титан|titanium",
     "metal": r"метал|metal",
-    "fabric": r"текстил|тканин|нейлон|fabric|nylon",
+    "fabric": r"текстил|тканин|тканев|нейлон|fabric|nylon",
     "ceramic": r"керамік|керамик|ceramic",
     "plastic": r"пластик|полімер|пластмасс|plastic"
 }
@@ -82,8 +82,8 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
     if unknown:
         raise ValueError(f"Unknown filters: {sorted(unknown)}")
     limit = max(1, min(20, int(limit)))
-    clauses = ["available = TRUE", "price IS NOT NULL", "price > 0", "url IS NOT NULL", "url <> ''"]
-    args = []
+    clauses = ["available = TRUE", "price IS NOT NULL", "price > 0", "url IS NOT NULL", "url <> ''", "LOWER(category) LIKE %s"]
+    args = ["%годинник%"]  # Zorro also sells straps, boxes and accessories.
     if filters.get("max_price") is not None:
         clauses.append("price <= %s")
         args.append(filters["max_price"])
@@ -183,6 +183,6 @@ def compare_by_ids(conn, ids: list[str]) -> list[dict]:
         cur.execute(
             "SELECT site_id, sku, name, vendor, category, price, available, url, "
             "image, description, attributes FROM zorro_products_v2 "
-            "WHERE site_id = ANY(%s)", (ids,))
+            "WHERE site_id = ANY(%s) AND LOWER(category) LIKE %s", (ids, "%годинник%"))
         items = {str(r["site_id"]): dict(r) for r in cur.fetchall() if r.get("available") and r.get("url") and r.get("price") is not None}
     return [items[str(x)] for x in ids if str(x) in items]
