@@ -126,6 +126,35 @@ class StagingSafetyTests(unittest.TestCase):
                 staging_main._read_only_db()
         conn.close.assert_called_once()
 
+    def test_setup_mode_runs_without_secrets_or_database(self):
+        cfg={"ZORRO_ENV":"staging","ZORRO_STAGING_SETUP_MODE":"1",
+             "ZORRO_USE_EXISTING_DB_READ_ONLY":"1","ZORRO_STAGING_SYNC_ENABLED":"0",
+             "ZORRO_STAGING_DB_NAME":"zorro_db"}
+        with patch.dict(os.environ,cfg,clear=True), patch.object(staging_main.threading,"Thread") as thread:
+            with TestClient(staging_main.app) as client:
+                status=client.get("/api/staging-status")
+                self.assertEqual(status.status_code,200)
+                self.assertTrue(status.json()["setup_required"])
+                self.assertFalse(status.json()["database_configured"])
+                chat=client.post("/api/chat",json={"message":"Підбери смартгодинник","history":[],"state":{}})
+                self.assertEqual(chat.status_code,503)
+                self.assertEqual(chat.json()["status"],"setup_required")
+            thread.assert_not_called()
+
+    def test_setup_mode_never_allows_sync(self):
+        cfg={"ZORRO_ENV":"staging","ZORRO_STAGING_SETUP_MODE":"1",
+             "ZORRO_USE_EXISTING_DB_READ_ONLY":"1","ZORRO_STAGING_SYNC_ENABLED":"1"}
+        with patch.dict(os.environ,cfg,clear=True):
+            with self.assertRaises(RuntimeError):
+                staging_main.staging_startup()
+
+    def test_setup_mode_not_allowed_outside_staging(self):
+        cfg={"ZORRO_ENV":"production","ZORRO_STAGING_SETUP_MODE":"1",
+             "ZORRO_USE_EXISTING_DB_READ_ONLY":"1","ZORRO_STAGING_SYNC_ENABLED":"0"}
+        with patch.dict(os.environ,cfg,clear=True):
+            with self.assertRaises(RuntimeError):
+                staging_main.staging_startup()
+
     def test_staging_callback_cannot_send_real_message(self):
         self.assertFalse(main.send_telegram_notification("+380991234567", "test"))
 
