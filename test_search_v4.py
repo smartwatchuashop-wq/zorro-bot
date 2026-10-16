@@ -135,6 +135,16 @@ class RetrievalTests(unittest.TestCase):
         found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"стал"}})
         self.assertEqual(found,[])
 
+    def test_zero_price_excluded_in_sql(self):
+        db=DB([])
+        search_products(db,{})
+        self.assertIn("price > 0",db.cur.sql)
+
+    def test_unavailable_item_not_compared(self):
+        p=watch("x","Old watch")
+        p["available"]=False
+        self.assertEqual(compare_by_ids(DB([p]),["x"]),[])
+
     def test_unknown_filter_rejected(self):
         with self.assertRaises(ValueError):
             search_products(DB([]),{"unsafe_sql":"DROP TABLE"})
