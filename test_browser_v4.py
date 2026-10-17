@@ -11,10 +11,19 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parent
 
 
+class Utf8Handler(http.server.SimpleHTTPRequestHandler):
+    # The real Horoshop page uses UTF-8; Python's tiny test server otherwise
+    # omits the encoding and Chromium may render Cyrillic as mojibake.
+    def guess_type(self, path):
+        if path.endswith(".html"):
+            return "text/html; charset=utf-8"
+        return super().guess_type(path)
+
+
 class WidgetBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ROOT))
+        handler = functools.partial(Utf8Handler, directory=str(ROOT))
         cls.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         cls.base = f"http://127.0.0.1:{cls.httpd.server_port}"
         cls.server_thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
