@@ -48,7 +48,8 @@ def ai_sales(message, products, history, action):
         return None
 
 def handle_chat(data, connect, render_card, format_text):
-    state=dict(getattr(data,"state",None) or {})
+    incoming_state=getattr(data,"state",None) or {}
+    state=dict(incoming_state) if isinstance(incoming_state,dict) else {}
     history=[{"role":m.role,"content":re.sub("<[^>]*>"," ",m.content)[:400]} for m in data.history[-12:]]
     ai=ai_json(data.message,history) or {}
     message=data.message.casefold()
@@ -57,12 +58,14 @@ def handle_chat(data, connect, render_card, format_text):
         action="search"
     if any(t in message for t in ("порівняй","порівняти","чим відрізня","перший і третій","ці моделі")):
         action="compare"
-    if any(t in message for t in ("доставка","оплата","повернен","гарантія","контакт")):
+    if any(t in message for t in ("достав","оплат","повернен","гарант","контакт")):
         action="question"
     elif "розкажи" in message and any(t in message for t in ("характеристик", "опис", "детальніше")):
         action="describe"
-    ids=[str(x) for x in state.get("product_ids",[])][:10]
-    filters=dict(state.get("filters") or {})
+    raw_ids=state.get("product_ids")
+    ids=[str(x) for x in raw_ids[:10]] if isinstance(raw_ids,list) else []
+    raw_filters=state.get("filters")
+    filters=dict(raw_filters) if isinstance(raw_filters,dict) else {}
     proposed=ai.get("filters") or {}
     if not isinstance(proposed, dict):
         proposed={}
@@ -74,10 +77,15 @@ def handle_chat(data, connect, render_card, format_text):
         # Avoid silently dropping the original budget on follow-up questions.
         if re.search(r"новий пошук|почн(емо|и) спочатку|забудь попередн", message):
             filters={}
-        if "без обмеження бюджету" in message or "будь-яка ціна" in message:
+        unrestricted_budget = "без обмеження бюджету" in message or "будь-яка ціна" in message
+        if unrestricted_budget:
             filters.pop("max_price",None)
             filters.pop("min_price",None)
         for k,v in proposed.items():
+            if unrestricted_budget and k in ("max_price","min_price"):
+                continue
+            if v is None:
+                continue
             if k in ("exclude","must_have") and isinstance(v,dict):
                 filters[k]={**(filters.get(k) or {}),**v}
             else: filters[k]=v
@@ -96,6 +104,17 @@ def handle_chat(data, connect, render_card, format_text):
             filters["audience"]="kids"
         if re.search(r"смарт|smart|розумн\w* годин", message):
             filters["watch_type"]="smart"
+        # Hard buyer requirements must survive an AI intent omission.
+        if (re.search(r"без\\s+(?:шкір|шкіри|шкіряного|кожан)", message)
+                or re.search(r"(?:не\\s+шкіря|без\\s+шкіря)", message)):
+            exclusions=filters.setdefault("exclude",{})
+            if isinstance(exclusions,dict):
+                exclusions["Матеріал ремінця"]=["Шкіряний"]
+        if (re.search(r"розмовлят|дзвінк|дзвонит|call(?:ing)?", message)
+                and not re.search(r"(?:без|не потрібн|не треба)\\s+(?:\\w+\\s+){0,2}(?:дзвінк|розмов)", message)):
+            required=filters.setdefault("must_have",{})
+            if isinstance(required,dict):
+                required["Можливість розмовляти"]="Так"
         # Cheap deterministic safety net for budget if AI misses it.
         found=re.search(r"\bдо\s*(\d[\d ]*)\s*(?:грн|₴)?",message)
         if found: filters["max_price"]=int(found.group(1).replace(" ",""))
