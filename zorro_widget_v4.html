@@ -337,8 +337,16 @@
       if (!API_BASE) return Promise.reject(new Error('Zorro AI backend URL is not configured'));
       var controller = new AbortController();
       var timer = setTimeout(function(){ controller.abort(); }, 65000);
+      var headers={'Content-Type':'application/json'};
+      // Only the owner manually supplies this staging-only secret after
+      // opening the protected test page. Never embed it in source or storage.
+      if (typeof window.ZORRO_AI_GET_ACCESS_TOKEN === 'function') {
+        var accessToken = window.ZORRO_AI_GET_ACCESS_TOKEN();
+        if (!accessToken) return Promise.reject(new Error('Staging access is locked'));
+        headers['X-Zorro-Staging-Token']=accessToken;
+      }
       return fetch(url, {
-        method:'POST',headers:{'Content-Type':'application/json'},
+        method:'POST',headers:headers,
         body:JSON.stringify(payload),signal:controller.signal
       }).then(function(res){
         if (!res.ok) throw new Error('HTTP ' + res.status);
