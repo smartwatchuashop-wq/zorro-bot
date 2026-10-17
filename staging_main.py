@@ -126,6 +126,14 @@ def _run_smoke_with_error_logging() -> None:
         LOG.exception("GEMINI_SMOKE RESULT=FAIL (inspect logs; no production data changed)")
 
 
+def _run_live_acceptance() -> None:
+    from staging_acceptance_v4 import run_acceptance
+    try:
+        run_acceptance()
+    except Exception:
+        LOG.exception("ACCEPTANCE RESULT=FAIL (see individual test results)")
+
+
 def staging_startup() -> None:
     if _setup_pending():
         if (os.getenv("ZORRO_ENV") != "staging"
@@ -150,6 +158,10 @@ def staging_startup() -> None:
             if not os.getenv("GEMINI_API_KEY"):
                 raise RuntimeError("Cannot smoke-test Gemini without a configured API key")
             threading.Thread(target=_run_smoke_with_error_logging, daemon=True).start()
+        if os.getenv("ZORRO_STAGING_LIVE_ACCEPTANCE", "0") == "1":
+            if not os.getenv("GEMINI_API_KEY"):
+                raise RuntimeError("Cannot run live acceptance without Gemini key")
+            threading.Thread(target=_run_live_acceptance, daemon=True).start()
         return
     production_module.db = _ORIGINAL_DB
     if os.getenv("ZORRO_STAGING_SYNC_ENABLED", "0") == "1":
