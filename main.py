@@ -17,6 +17,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
+from hybrid_search import ranked_ids, reciprocal_rank_fusion, index_status
+from grounded_answer import natural_reply
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger("zorro.ai")
@@ -24,7 +26,7 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 DB_URL = os.getenv("DATABASE_URL", "")
 KEY = os.getenv("GEMINI_API_KEY", "")
 
-app = FastAPI(title="Zorro AI Consultant", version="5.1")
+app = FastAPI(title="Zorro AI Consultant", version="6.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 CATEGORIES = {
@@ -218,7 +220,7 @@ def score_product(p: dict, query: str, f: dict) -> float:
     return score
 
 
-def shortlist(filters: dict, query: str, count: int = 12) -> list[dict]:
+def legacy_shortlist(filters: dict, query: str, count: int = 12) -> list[dict]:
     eligible = [p for p in load_catalog(filters) if passes_hard_filters(p, filters)]
     if not eligible:
         return []
@@ -242,6 +244,52 @@ def shortlist(filters: dict, query: str, count: int = 12) -> list[dict]:
             break
     return dedup
 
+
+
+def shortlist(filters: dict, query: str, count: int = 36) -> list[dict]:
+    """Full-catalog hybrid: vector + PostgreSQL FTS + trigram, RRF fusion.
+
+    All hard constraints are enforced again on live PostgreSQL products.
+    If index is not configured, the old full-catalog lexical route remains
+    operational (but the status endpoint clearly says hybrid is NOT ready).
+    """
+    try:
+        branches = ranked_ids(query, filters, semantic=True)
+        ids = reciprocal_rank_fusion(branches, limit=120)
+        if not ids:
+            # Broad/category-only searches need price and catalog coverage, too.
+            return legacy_shortlist(filters, query, count)
+        by_id = {str(p['site_id']): p for p in load_catalog(filters)}
+        result = []
+        seen = set()
+        for site_id in ids:
+            p = by_id.get(str(site_id))
+            if p and passes_hard_filters(p, filters):
+                dedup = (norm(p.get('vendor')), norm(p.get('name')))
+                if dedup not in seen:
+                    result.append(p)
+                    seen.add(dedup)
+            if len(result) >= count:
+                break
+        # Supplement vector/keyword hits when mandatory conditions trim candidates.
+        if len(result) < count:
+            for p in legacy_shortlist(filters, query, count):
+                key = (norm(p.get('vendor')), norm(p.get('name')))
+                if key not in seen:
+                    result.append(p)
+                    seen.add(key)
+                if len(result) >= count:
+                    break
+        return result[:count]
+    except Exception as ex:
+        LOG.warning('Hybrid unavailable; using non-vector lexical fallback: %s', type(ex).__name__)
+        return legacy_shortlist(filters, query, count)
+
+
+def sales_reply(purpose: str, message: str, products: list[dict], filters: dict,
+                history: list[dict], fallback) -> str:
+    return natural_reply(gemini, model_parts, purpose, message, products, filters,
+                         history, fallback)
 
 def get_ids(ids: list[str]) -> list[dict]:
     if not ids:
@@ -287,6 +335,7 @@ def tool_declarations() -> list[dict]:
              "mechanism": {"type": "STRING", "description": "mechanical or quartz"},
              "sim": {"type": "BOOLEAN", "description": "True only for explicitly required physical SIM"},
              "keywords": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Up to 4 semantic synonyms/descriptions matching style or buyer purpose"},
+             "search_query": {"type": "STRING", "description": "Short focused semantic search phrasing based strictly on the buyer's need; preserve purpose and style. For followups retain previous intent from current filters or recent dialogue."},
              "remove_filters": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Names of previous restrictions expressly canceled"}
          }, "required": ["mode"]}},
         {"name": "compare_watches", "description": "Compare previously recommended products. Use positions 1,2,3 or IDs in previous_shown_ids, never a fresh search.",
@@ -346,6 +395,7 @@ def select_action(question: str, history: list[dict], state: dict, current: str 
               "Never invent inventory, prices, capabilities or store policies. "
               "Specify ONLY changes explicitly expressed in the latest user message; do not echo all old filters. "
               "For general purpose/style requests, generate 1-4 descriptive synonyms as soft keywords, not false hard facts. "
+              "Write search_query with actual customer purpose, not a bland product category. "
               "For 'without SIM but calling', set calling=true and sim=false not keywords 'SIM'. "
               "If the user cancels an earlier constraint, use remove_filters. "
               "Return a function call, never executable SQL.")
@@ -761,7 +811,8 @@ def no_results_message(filters: dict, question: str = "") -> str:
 def chat_controller(data: ChatIn) -> dict:
     current = data.state if isinstance(data.state, dict) else {}
     state = {"filters": current.get("filters") if isinstance(current.get("filters"), dict) else {},
-             "product_ids": [str(i) for i in current.get("product_ids", [])[:10]] if isinstance(current.get("product_ids"), list) else []}
+             "product_ids": [str(i) for i in current.get("product_ids", [])[:10]] if isinstance(current.get("product_ids"), list) else [],
+             "search_intent": str(current.get("search_intent") or "")[:350]}
     history = [{"role": p.role[:10], "content": re.sub(r"<[^>]*>", " ", p.content)[:450]}
                for p in data.history[-10:] if p.role in ("user", "assistant")]
     message = data.message.strip()
@@ -803,7 +854,7 @@ def chat_controller(data: ChatIn) -> dict:
         tool = "recommend_shown"
     if tool == "recommend_shown":
         products = get_ids(state["product_ids"])
-        return {"reply": personal_recommendation(products, message, state["filters"]),
+        return {"reply": sales_reply("recommend", message, products, state["filters"], history, lambda: personal_recommendation(products, message, state["filters"])),
                 "products": [], "state": state}
     if tool == "compare_watches":
         ids = state["product_ids"]
@@ -821,7 +872,7 @@ def chat_controller(data: ChatIn) -> dict:
         elif re.search(r"перш.*друг", text) and len(ids) >= 2:
             selected = [ids[0], ids[1]]
         products = get_ids(selected)
-        return {"reply": compare_text(products, message, state["filters"]), "products": [], "state": state}
+        return {"reply": sales_reply("compare", message, products, state["filters"], history, lambda: compare_text(products, message, state["filters"])), "products": [], "state": state}
     if tool == "describe_watch":
         ids = state["product_ids"]
         target = str(args.get("id") or "") if isinstance(args, dict) else ""
@@ -848,7 +899,7 @@ def chat_controller(data: ChatIn) -> dict:
         if not products:
             return {"reply": "Про яку саме модель із показаних розповісти? Напишіть її назву або номер.",
                     "products": [], "state": state}
-        return {"reply": describe_text(products[0], message, state["filters"]), "products": [], "state": state}
+        return {"reply": sales_reply("describe", message, products, state["filters"], history, lambda: describe_text(products[0], message, state["filters"])), "products": [], "state": state}
     if tool != "search_catalog":
         tool, args = "search_catalog", {"mode": "refine"}
     filters = merge_filter_state(state["filters"], args if isinstance(args, dict) else {}, message)
@@ -861,10 +912,25 @@ def chat_controller(data: ChatIn) -> dict:
             filters["max_price"] = min(int(current_bound), cheaper_than) if current_bound is not None else cheaper_than
     if not filters and not re.search(r"годин|watch|смарт|подарун|skmei", norm(message)):
         return {"reply": "Які годинники шукаєте та який бажаний бюджет?", "products": [], "state": state}
-    candidates = shortlist(filters, message, 12)
+    # Semantic query keeps the buyer's true intention during brief follow-ups.
+    prior_intent = state.get("search_intent") or ""
+    changes_only = bool(re.search(r"^(?:а )?(дешевш|подешевш|дорожч|без |ще |із |з |тільки |менш )", norm(message)))
+    semantic_query = (prior_intent + " " + message).strip() if changes_only and prior_intent and args.get("mode") != "new" and not determine_category(message) else message
+    if isinstance(args.get("search_query"), str) and args["search_query"].strip():
+        proposed = re.sub(r"[\r\n]+", " ", args["search_query"]).strip()[:240]
+        # Gemini is allowed to paraphrase query semantics, not bypass catalog filters.
+        semantic_query = (prior_intent + " " + proposed).strip() if changes_only and prior_intent else proposed
+    if filters.get("category") and norm(filters["category"]) not in norm(semantic_query):
+        semantic_query += " " + filters["category"]
+    # Gemini-proposed soft synonyms expand vector retrieval; mandatory criteria
+    # still come exclusively from PostgreSQL fields, never from synonyms.
+    expansion = [str(k).strip()[:45] for k in (filters.get("keywords") or [])[:4]
+                 if isinstance(k, str) and str(k).strip()]
+    retrieval_query = (semantic_query + " " + " ".join(expansion)).strip()[:500]
+    candidates = shortlist(filters, retrieval_query, 36)
     if not candidates:
         return {"reply": no_results_message(filters, message), "products": [],
-                "state": {"filters": filters, "product_ids": []}}
+                "state": {"filters": filters, "product_ids": [], "search_intent": semantic_query[:350]}}
     plan = (choose_with_gemini(first, tool, context, candidates, "search", with_advice=True)
             if first else {"ids": [str(p["site_id"]) for p in candidates[:3]],
                            "lead": "", "question": "", "focus": {}})
@@ -874,14 +940,15 @@ def chat_controller(data: ChatIn) -> dict:
     selected = [by_id[i] for i in plan.get("ids", []) if i in by_id][:3]
     if not selected:
         selected = candidates[:3]
-    reply = human_search_reply(selected, filters, plan)
+    reply = sales_reply("search", message, selected, filters, history,
+                        lambda: human_search_reply(selected, filters, plan))
     return {"reply": reply, "products": [render_product(p) for p in selected],
-            "state": {"filters": filters, "product_ids": [str(p["site_id"]) for p in selected]}}
+            "state": {"filters": filters, "product_ids": [str(p["site_id"]) for p in selected], "search_intent": semantic_query[:350]}}
 
 
 @app.get("/")
 def root():
-    return {"status": "ok", "name": "Zorro AI", "version": "5.1", "model": MODEL}
+    return {"status": "ok", "name": "Zorro AI", "version": "6.0", "model": MODEL}
 
 
 @app.get("/api/catalog-status")
@@ -891,7 +958,12 @@ def catalog_status():
         with connection.cursor() as cur:
             cur.execute("SELECT COUNT(*),COUNT(*) FILTER (WHERE available AND price > 0) FROM zorro_products_v2")
             all_items, available = cur.fetchone()
-            return {"status": "ok", "products": all_items, "available": available}
+            result = {"status": "ok", "products": all_items, "available": available}
+            try:
+                result["hybrid_search"] = index_status()
+            except Exception as ex:
+                result["hybrid_search"] = {"ready": False, "error": type(ex).__name__}
+            return result
     finally:
         connection.close()
 
