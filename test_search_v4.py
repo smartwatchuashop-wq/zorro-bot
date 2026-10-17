@@ -32,6 +32,29 @@ class RetrievalTests(unittest.TestCase):
         db=DB([watch("1","Steel"),watch("2","Leather",strap="Шкіряний")])
         r=search_products(db,{"exclude":{"Матеріал ремінця":["Шкіряний"]}})
         self.assertEqual([p["site_id"] for p in r],["1"])
+    def test_broad_budget_picks_distinct_price_tiers(self):
+        watches=[watch(str(i),"Watch "+str(i),price=price,
+                       vendor=("Skmei" if i%2 else "Casio")) for i,price in
+                 enumerate([495,550,800,1050,1295,1450,1600,1795,1950],1)]
+        found=search_products(DB(watches),{"max_price":2000},limit=3)
+        prices=[float(p["price"]) for p in found]
+        self.assertEqual(len(prices),3)
+        self.assertEqual(prices,sorted(prices))
+        self.assertGreater(max(prices)-min(prices),500)
+        self.assertTrue(all(p <= 2000 for p in prices))
+
+    def test_specific_keyword_preserves_relevance_not_price_tiers(self):
+        rows=[watch(str(i),"Sport Watch "+str(i),price=price) for i,price in
+              enumerate([500,550,600,1250,1400,1550,1800,1900],1)]
+        found=search_products(DB(rows),{"max_price":2000,"include":["Sport"]},limit=3)
+        self.assertEqual([float(x["price"]) for x in found],[500,550,600])
+
+    def test_narrow_price_band_does_not_invent_price_tiers(self):
+        rows=[watch(str(i),"Watch "+str(i),price=price) for i,price in
+              enumerate([1450,1460,1470,1480,1490,1500],1)]
+        found=search_products(DB(rows),{"max_price":1500},limit=3)
+        self.assertEqual([float(x["price"]) for x in found],[1450,1460,1470])
+
     def test_duplicate_names(self):
         db=DB([watch("1","Same"),watch("2","Same")])
         self.assertEqual(len(search_products(db,{})),1)
