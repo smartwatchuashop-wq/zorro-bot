@@ -165,6 +165,47 @@ def run_smoke() -> None:
     except Exception as exc:
         LOG.error("GEMINI_SMOKE smart_failed=%s", exc)
         errors.append("smart")
+    # Compare EXACTLY the first and third previously shown, and retain
+    # the original shortlist for future turns.
+    try:
+        previous_ids=first["state"]["product_ids"]
+        if len(previous_ids)<3:
+            raise RuntimeError("A three-item shortlist is needed to test ordinals")
+        compared,_=ask("Порівняй перший і третій",first["state"],history)
+        if compared["state"]["product_ids"] != previous_ids:
+            raise RuntimeError("Comparison erased the original shortlist")
+        compared_ids=[str(p["id"]) for p in compared["products"]]
+        if compared_ids != [previous_ids[0],previous_ids[2]]:
+            raise RuntimeError("Comparison returned the wrong IDs: "+str(compared_ids))
+        LOG.warning("GEMINI_SMOKE compare_first_third_ok=True ids=%s",
+                    ",".join(compared_ids))
+    except Exception as exc:
+        LOG.error("GEMINI_SMOKE compare_failed=%s",exc)
+        errors.append("compare")
+
+    # User explicitly requests a single product card's characteristics.
+    try:
+        chosen=first["state"]["product_ids"][1]
+        conn=main.db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM zorro_products_v2 WHERE site_id=%s",(chosen,))
+                item=cur.fetchone()
+        finally:
+            conn.close()
+        if not item:
+            raise RuntimeError("Selected product missing from catalog")
+        described,_=ask("Розкажи детальніше характеристики та опис "+item[0],first["state"],history)
+        chosen_ids=[str(p["id"]) for p in described["products"]]
+        if chosen_ids != [chosen]:
+            raise RuntimeError("Description returned wrong products: "+str(chosen_ids))
+        if described["state"]["product_ids"] != first["state"]["product_ids"]:
+            raise RuntimeError("Description erased original shortlist")
+        LOG.warning("GEMINI_SMOKE single_description_ok=True id=%s",chosen)
+    except Exception as exc:
+        LOG.error("GEMINI_SMOKE description_failed=%s",exc)
+        errors.append("describe")
+
     if errors:
         raise RuntimeError("Smoke scenarios failed: " + ",".join(errors))
-    LOG.warning("GEMINI_SMOKE RESULT=PASS; Gemini intent, answers, live PostgreSQL, follow-up and calling verified")
+    LOG.warning("GEMINI_SMOKE RESULT=PASS; live intent, products, follow-up, calling, comparison, description verified")
