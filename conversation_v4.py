@@ -104,6 +104,41 @@ def handle_chat(data, connect, render_card, format_text):
             filters["audience"]="kids"
         if re.search(r"смарт|smart|розумн\w* годин", message):
             filters["watch_type"]="smart"
+        if re.search(r"механічн|механическ|mechanical", message):
+            # Verified type must be explicit, not inferred from a model name.
+            filters["watch_type"]="mechanical"
+            required=filters.get("must_have")
+            if not isinstance(required,dict):
+                required={}
+            required["Тип механізму"]="Механічний"
+            filters["must_have"]=required
+            if "механ" in normalize(filters.get("category")):
+                if filters.get("audience")=="men":
+                    filters["category"]="Чоловічі годинники"
+                else:
+                    filters.pop("category",None)
+        if re.search(r"\bskmei\b",message):
+            filters["brand"]="Skmei"
+        if re.search(r"сталев|сталлю|сталь|стальн",message):
+            required=filters.get("must_have")
+            if not isinstance(required,dict):
+                required={}
+            required["Матеріал ремінця"]="Сталевий"
+            filters["must_have"]=required
+        # Gemini may list an explicit search requirement as a one-item list.
+        # Do not hand malformed JSON types to PostgreSQL filtering.
+        if isinstance(filters.get("must_have"),dict):
+            for field,value in list(filters["must_have"].items()):
+                if isinstance(value,list) and len(value)==1 and isinstance(value[0],str):
+                    filters["must_have"][field]=value[0]
+        # Explicit requirements are already enforced above: remove keyword
+        # duplicates with inflection mismatches that could hide valid stock.
+        if isinstance(filters.get("include"),list):
+            cleaned=[word for word in filters["include"] if isinstance(word,str)
+                     and not re.search(r"механіч|механическ|сталев|стальн|\bskmei\b",word.casefold())]
+            if len(cleaned)!=len(filters["include"]):
+                if cleaned: filters["include"]=cleaned
+                else: filters.pop("include",None)
         # Hard buyer requirements must survive an AI intent omission.
         if (re.search(r"без\s+(?:шкір|шкіри|шкіряного|кожан)", message)
                 or re.search(r"(?:не\s+шкіря|без\s+шкіря)", message)):
