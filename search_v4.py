@@ -200,17 +200,40 @@ def search_products(conn, filters: dict, limit: int = 5) -> list[dict]:
             continue
         ranked.append((score, p))
     ranked.sort(key=lambda item: (-item[0], float(item[1]["price"]), normalize(item[1]["name"])))
-    result, seen = [], set()
-    for _, p in ranked:
-        # Avoid duplicate variants on the initial recommendation list.
+    unique, seen = [], set()
+    for score, p in ranked:
+        # Never return multiple identical product variants in one recommendation.
         key = (normalize(p["vendor"]), normalize(p["name"]))
         if key in seen:
             continue
         seen.add(key)
-        result.append(p)
-        if len(result) >= limit:
-            break
-    return result
+        unique.append(p)
+
+    # Broad budget searches should not automatically show three of the
+    # absolute cheapest watches. Show a verified low/mid/high price spread
+    # when enough matching stock exists. Specific keyword/SKU searches
+    # still preserve relevance ranking, and ALL hard filters ran above.
+    if (not include and not filters.get("sku") and filters.get("max_price") is not None
+            and limit == 3 and len(unique) >= 6):
+        by_price = sorted(unique, key=lambda p: (float(p["price"]), normalize(p["name"])))
+        spread = float(by_price[-1]["price"]) - float(by_price[0]["price"])
+        if spread >= 250:
+            choices, used_brands = [], set()
+            for q in (0.20, 0.50, 0.80):
+                target = float(by_price[round(q * (len(by_price) - 1))]["price"])
+                available = [p for p in by_price if p not in choices]
+                chosen = min(
+                    available,
+                    key=lambda p: (
+                        abs(float(p["price"]) - target) / spread +
+                        (0.08 if normalize(p["vendor"]) in used_brands else 0),
+                        float(p["price"]), normalize(p["name"])
+                    ),
+                )
+                choices.append(chosen)
+                used_brands.add(normalize(chosen["vendor"]))
+            return sorted(choices, key=lambda p: float(p["price"]))
+    return unique[:limit]
 
 def compare_by_ids(conn, ids: list[str]) -> list[dict]:
     """Use EXACT previously shown products; never launch a new ranking search."""
