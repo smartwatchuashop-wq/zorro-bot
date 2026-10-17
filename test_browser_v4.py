@@ -48,8 +48,14 @@ class WidgetBrowserTests(unittest.TestCase):
                           '<a href="https://zorro.com.ua/casio-classic/">Купити</a>')
         state = state or {"filters":{"max_price":1800}, "product_ids":["3718"]}
         def handler(route):
+            headers={"Access-Control-Allow-Origin":"*",
+                     "Access-Control-Allow-Headers":"Content-Type",
+                     "Access-Control-Allow-Methods":"OPTIONS,POST"}
+            if route.request.method == "OPTIONS":
+                route.fulfill(status=204,headers=headers)
+                return
             self.requests.append(route.request.post_data_json)
-            route.fulfill(status=200, content_type="application/json",
+            route.fulfill(status=200, content_type="application/json",headers=headers,
                           body=json.dumps({"reply":reply, "state":state},ensure_ascii=False))
         self.page.route("https://api.zorro.test/api/chat", handler)
 
@@ -134,8 +140,15 @@ class WidgetBrowserTests(unittest.TestCase):
 
     def test_callback_failure_and_untrusted_status_text(self):
         def failed(route):
+            headers={"Access-Control-Allow-Origin":"*",
+                     "Access-Control-Allow-Headers":"Content-Type",
+                     "Access-Control-Allow-Methods":"OPTIONS,POST"}
+            if route.request.method == "OPTIONS":
+                route.fulfill(status=204,headers=headers)
+                return
             self.requests.append(route.request.post_data_json)
-            route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            route.fulfill(status=200, content_type="application/json",headers=headers,
+                          body=json.dumps({
                 "status":"error",
                 "reply":'<img src="x" onerror="window.__attacked=1">Заявку не передано'
             }))
