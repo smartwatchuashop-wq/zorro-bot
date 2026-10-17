@@ -66,6 +66,22 @@ class ShoppingScenarioMatrix(unittest.TestCase):
     def tearDownClass(cls):
         cls.conn.close()
 
+    def test_broad_budget_recommendations_span_useful_prices(self):
+        rows=search_products(self.conn,{"max_price":2000},limit=3)
+        prices=[float(p["price"]) for p in rows]
+        self.assertEqual(len(prices),3)
+        self.assertEqual(prices,sorted(prices))
+        self.assertGreater(prices[-1]-prices[0],450)
+
+    def test_diverse_budget_still_honors_material_exclusion(self):
+        rows=search_products(self.conn,{
+            "max_price":2000,
+            "exclude":{"Матеріал ремінця":["Шкіряний"]}
+        },limit=3)
+        self.assertEqual(len(rows),3)
+        self.assertTrue(all("leather" not in _material_kinds(
+            p["attributes"].get("Матеріал ремінця")) for p in rows))
+
     def test_price_budget_boundaries(self):
         for budget in (1,449,450,594,595,800,980,1195,1250,1499,1600,1695,1750,1800,1850,1995,2000,2299,5000):
             with self.subTest(max_price=budget):
