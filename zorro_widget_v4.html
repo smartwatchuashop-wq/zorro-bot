@@ -96,9 +96,11 @@
 
     function getPageProductData() {
       // Category pages also have H1 headings. Require actual product-page evidence.
-      var productSchema = document.querySelector('[itemtype*="schema.org/Product"]');
-      var productArea = document.querySelector('.product-gallery') ||
-                        document.querySelector('[data-product-id]');
+      var productSchemas = document.querySelectorAll('[itemtype*="schema.org/Product"]');
+      // A category listing can have many per-item schemas. Only a unique
+      // Product schema or an actual product gallery identifies a detail page.
+      var productSchema = productSchemas.length === 1 ? productSchemas[0] : null;
+      var productArea = document.querySelector('.product-gallery, .product-detail-gallery');
       var h1 = document.querySelector('h1.product-title') ||
                (productSchema && productSchema.querySelector('h1')) ||
                (productArea && document.querySelector('h1'));
