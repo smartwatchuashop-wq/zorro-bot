@@ -222,5 +222,5 @@ def compare_by_ids(conn, ids: list[str]) -> list[dict]:
             "SELECT site_id, sku, name, vendor, category, price, available, url, "
             "image, description, attributes FROM zorro_products_v2 "
             "WHERE site_id = ANY(%s) AND LOWER(category) LIKE %s", (ids, "%годинник%"))
-        items = {str(r["site_id"]): dict(r) for r in cur.fetchall() if r.get("available") and r.get("url") and r.get("price") is not None}
+        items = {str(r["site_id"]): dict(r) for r in cur.fetchall() if r.get("available") and r.get("url") and r.get("price") is not None and float(r["price"]) > 0 and canonical_watch_category(r.get("category")) is not None}
     return [items[str(x)] for x in ids if str(x) in items]
