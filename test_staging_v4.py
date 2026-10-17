@@ -240,6 +240,31 @@ class StagingSafetyTests(unittest.TestCase):
                 staging_main.staging_startup()
             thread.assert_not_called()
 
+    def test_live_acceptance_is_explicitly_opt_in(self):
+        cfg=dict(CONF,DATABASE_URL="postgresql://prod:secret@prod.internal/zorro_db",
+                 ZORRO_STAGING_DB_NAME="zorro_db",ZORRO_STAGING_DB_HOST="prod.internal",
+                 ZORRO_USE_EXISTING_DB_READ_ONLY="1",ZORRO_STAGING_LIVE_ACCEPTANCE="1",
+                 GEMINI_API_KEY="test-only-not-a-real-key")
+        with patch.dict(os.environ,cfg,clear=True), patch.object(
+                staging_main,"_verify_live_read_only_catalog",return_value=1035), patch.object(
+                staging_main.threading,"Thread") as thread:
+            staging_main.staging_startup()
+            thread.assert_called_once()
+            self.assertIs(thread.call_args.kwargs["target"],
+                          staging_main._run_live_acceptance)
+            thread.return_value.start.assert_called_once()
+
+    def test_live_acceptance_refuses_missing_gemini_key(self):
+        cfg=dict(CONF,DATABASE_URL="postgresql://prod:secret@prod.internal/zorro_db",
+                 ZORRO_STAGING_DB_NAME="zorro_db",ZORRO_STAGING_DB_HOST="prod.internal",
+                 ZORRO_USE_EXISTING_DB_READ_ONLY="1",ZORRO_STAGING_LIVE_ACCEPTANCE="1")
+        with patch.dict(os.environ,cfg,clear=True), patch.object(
+                staging_main,"_verify_live_read_only_catalog",return_value=1035), patch.object(
+                staging_main.threading,"Thread") as thread:
+            with self.assertRaises(RuntimeError):
+                staging_main.staging_startup()
+            thread.assert_not_called()
+
     def test_staging_callback_cannot_send_real_message(self):
         self.assertFalse(main.send_telegram_notification("+380991234567", "test"))
 
