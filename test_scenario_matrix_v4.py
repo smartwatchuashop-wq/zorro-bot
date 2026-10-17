@@ -57,7 +57,7 @@ class ShoppingScenarioMatrix(unittest.TestCase):
                 for id,sku,name,vendor,category,price,available,has_url,attrs in ITEMS:
                     cur.execute("""INSERT INTO zorro_products_v2
                         (site_id,sku,name,vendor,category,price,available,url,image,description,attributes)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,'','',%s::jsonb)""",
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'','',%s::jsonb)""",
                         (id,sku,name,vendor,category,price,available,
                          "https://zorro.com.ua/item/"+id if has_url else "",
                          json.dumps(attrs,ensure_ascii=False)))
