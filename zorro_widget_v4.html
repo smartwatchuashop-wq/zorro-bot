@@ -95,8 +95,14 @@
     var STORAGE_KEY_HTML = 'zorro_ai_chat_html';
 
     function getPageProductData() {
-      var h1 = document.querySelector('h1.product-title') || document.querySelector('h1');
-      if (!h1 || window.location.pathname.length < 5) return null;
+      // Category pages also have H1 headings. Require actual product-page evidence.
+      var productSchema = document.querySelector('[itemtype*="schema.org/Product"]');
+      var productArea = document.querySelector('.product-gallery') ||
+                        document.querySelector('[data-product-id]');
+      var h1 = document.querySelector('h1.product-title') ||
+               (productSchema && productSchema.querySelector('h1')) ||
+               (productArea && document.querySelector('h1'));
+      if (!h1 || !productArea && !productSchema) return null;
       var title = h1.innerText.trim();
       if (!title || title.toLowerCase().includes('каталог')) return null;
 
@@ -153,7 +159,9 @@
     var STORAGE_KEY_TURNS = 'zorro_ai_v4_turns';
     // New HTML key deliberately isolates v4 from the old, HTML-only localStorage.
     STORAGE_KEY_HTML = 'zorro_ai_v4_html';
-    var API_BASE = String(window.ZORRO_AI_API_BASE || 'https://fastapi-qie2.onrender.com').replace(/\/+$/, '');
+    // Deliberately no production fallback. The integration must explicitly set a backend.
+    var API_BASE = String(window.ZORRO_AI_API_BASE || '').replace(/\/+$/, '');
+    if (API_BASE && !/^https:\/\/[a-z0-9.-]+(?::443)?$/i.test(API_BASE)) API_BASE = '';
     var dialogueState = {filters:{}, product_ids:[]};
     var chatTurns = [];
     var busy = false;
@@ -171,9 +179,107 @@
         return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
       });
     }
+    // Parse untrusted backend/localStorage HTML in an inert template, then
+    // build a fresh DOM containing only safe markup and safe URL protocols.
+    // This intentionally retains inline card styling but discards scripts,
+    // handlers, form controls, embedded objects and remote CSS resources.
+    var SAFE_TAGS = {DIV:1, SPAN:1, P:1, BR:1, B:1, STRONG:1, EM:1,
+                     I:1, SMALL:1, UL:1, OL:1, LI:1, A:1, IMG:1, BUTTON:1};
+    var SAFE_CSS_PROPS = /^(?:display|flex|flex-direction|flex-wrap|flex-shrink|flex-grow|align-items|align-self|justify-content|gap|box-sizing|width|height|min-width|max-width|min-height|max-height|margin|margin-top|margin-bottom|margin-left|margin-right|padding|padding-top|padding-bottom|padding-left|padding-right|border|border-top|border-bottom|border-color|border-radius|box-shadow|background|background-color|color|font-size|font-weight|font-family|line-height|text-align|text-decoration|text-transform|letter-spacing|object-fit|overflow|overflow-wrap|white-space|-webkit-box-orient|-webkit-line-clamp)$/;
+    function safeLink(raw, image) {
+      try {
+        if (!raw || String(raw).length > 2048) return '';
+        var url = new URL(String(raw), window.location.origin);
+        if (url.protocol !== 'https:' || url.username || url.password) return '';
+        // All purchase actions must point to the actual store, never to a
+        // supplier, shortened redirect, data: or javascript: link.
+        if (!image && !/^(?:www\.)?zorro\.com\.ua$/i.test(url.hostname)) return '';
+        return url.href;
+      } catch (_) { return ''; }
+    }
+    function safeMarkup(raw) {
+      var template = document.createElement('template');
+      template.innerHTML = String(raw || '').slice(0, 160000);
+      var fragment = document.createDocumentFragment();
+      var blocked = {SCRIPT:1, STYLE:1, IFRAME:1, OBJECT:1, EMBED:1,
+                     FORM:1, INPUT:1, TEXTAREA:1, SELECT:1, SVG:1,
+                     MATH:1, VIDEO:1, AUDIO:1, BASE:1, LINK:1, META:1};
+      function clean(node) {
+        if (node.nodeType === 3) return document.createTextNode(node.nodeValue);
+        if (node.nodeType !== 1) return null;
+        var tag = node.tagName.toUpperCase();
+        if (blocked[tag]) return null;
+        if (!SAFE_TAGS[tag]) {
+          var text = document.createDocumentFragment();
+          Array.from(node.childNodes).forEach(function(child) {
+            var cleanChild = clean(child);
+            if (cleanChild) text.appendChild(cleanChild);
+          });
+          return text;
+        }
+        var el = document.createElement(tag.toLowerCase());
+        if (tag === 'A') {
+          var href = safeLink(node.getAttribute('href'), false);
+          if (!href) return document.createTextNode(node.textContent || '');
+          el.setAttribute('href', href);
+          el.setAttribute('target', '_self');
+          el.setAttribute('rel', 'noopener noreferrer');
+        }
+        if (tag === 'IMG') {
+          var src = safeLink(node.getAttribute('src'), true);
+          if (!src) return null;
+          el.setAttribute('src', src);
+          el.setAttribute('alt', (node.getAttribute('alt') || '').slice(0, 250));
+          el.setAttribute('loading', 'lazy');
+          el.setAttribute('referrerpolicy', 'no-referrer');
+        }
+        var className = (node.getAttribute('class') || '').split(/\s+/)
+          .filter(function(x) {return x === 'ai-chip' || x === 'ai-card-action';})
+          .join(' ');
+        if (className) el.setAttribute('class', className);
+        if (tag === 'DIV' && node.getAttribute('id') === 'ai-quick-replies') {
+          el.setAttribute('id', 'ai-quick-replies');
+        }
+        if (tag === 'BUTTON' || tag === 'SPAN') {
+          var action = node.getAttribute('data-action');
+          if (['call-modal', 'similar', 'desc'].indexOf(action) !== -1) {
+            el.setAttribute('data-action', action);
+          }
+          if (className.indexOf('ai-chip') !== -1 && node.hasAttribute('data-msg')) {
+            el.setAttribute('data-msg', (node.getAttribute('data-msg') || '').slice(0, 500));
+          }
+          if (node.hasAttribute('data-name')) {
+            el.setAttribute('data-name', (node.getAttribute('data-name') || '').slice(0, 300));
+          }
+        }
+        // Use parsed CSS declarations, not arbitrary cssText from the source.
+        for (var i = 0; i < node.style.length; i++) {
+          var prop = node.style.item(i).toLowerCase();
+          var val = node.style.getPropertyValue(prop);
+          if (!SAFE_CSS_PROPS.test(prop) || val.length > 160 ||
+              /url\s*\(|expression\s*\(|@import|javascript\s*:|data\s*:|var\s*\(|[<>\\]/i.test(val)) continue;
+          el.style.setProperty(prop, val);
+        }
+        if (tag !== 'IMG' && tag !== 'BR') {
+          Array.from(node.childNodes).forEach(function(child) {
+            var cleanChild = clean(child);
+            if (cleanChild) el.appendChild(cleanChild);
+          });
+        }
+        return el;
+      }
+      Array.from(template.content.childNodes).forEach(function(n) {
+        var node = clean(n);
+        if (node) fragment.appendChild(node);
+      });
+      return fragment;
+    }
+
     function saveChatState() {
       try {
-        localStorage.setItem(STORAGE_KEY_HTML, messagesContainer.innerHTML);
+        var savedMarkup = messagesContainer.innerHTML;
+        if (savedMarkup.length <= 160000) localStorage.setItem(STORAGE_KEY_HTML, savedMarkup);
+        else localStorage.removeItem(STORAGE_KEY_HTML);
         localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(dialogueState));
         localStorage.setItem(STORAGE_KEY_TURNS, JSON.stringify(chatTurns.slice(-12)));
       } catch (_) {}
@@ -195,14 +301,14 @@
       messagesContainer.appendChild(div);
       scrollChat();
     }
-    function addBotText(text, error) {
+    function addBotText(text, error, plainText) {
       var div = document.createElement('div');
       div.style.cssText = 'align-self:flex-start;width:100%;margin-bottom:6px;line-height:1.4;overflow-wrap:anywhere';
-      if (error) {
-        div.style.color = '#b91c1c'; div.textContent = String(text);
+      if (error || plainText) {
+        if (error) div.style.color = '#b91c1c';
+        div.textContent = String(text);
       } else {
-        // /api/chat generates escaped text + known card HTML. Never inject user text here.
-        div.innerHTML = String(text || '');
+        div.appendChild(safeMarkup(text));
       }
       messagesContainer.appendChild(div);
       scrollChat();
@@ -210,7 +316,9 @@
     function loadChatHistory() {
       var savedHtml = null;
       try { savedHtml = localStorage.getItem(STORAGE_KEY_HTML); } catch (_) {}
-      messagesContainer.innerHTML = savedHtml && savedHtml.trim() ? savedHtml : buildGreeting();
+      messagesContainer.replaceChildren(
+        safeMarkup(savedHtml && savedHtml.trim() ? savedHtml : buildGreeting())
+      );
       scrollChat();
     }
     function openChat() {
@@ -223,6 +331,7 @@
     function openCallbackPanel() { callbackPanel.style.display = 'flex'; callbackPhoneInput.focus(); }
     function closeCallbackPanel() { callbackPanel.style.display = 'none'; callbackPhoneInput.value = ''; }
     function requestJson(url, payload) {
+      if (!API_BASE) return Promise.reject(new Error('Zorro AI backend URL is not configured'));
       var controller = new AbortController();
       var timer = setTimeout(function(){ controller.abort(); }, 65000);
       return fetch(url, {
@@ -280,7 +389,8 @@
       callbackSubmitBtn.disabled=true;
       var context=pageProduct ? 'Переглядає товар: ' + pageProduct.title : 'Замовлення консультації з чату';
       requestJson(API_BASE + '/api/callback',{phone:phone,message:context}).then(function(data){
-        addBotText(data && data.reply ? data.reply : 'Не вдалося відправити заявку.', !(data && data.status === 'success'));
+        addBotText(data && data.reply ? data.reply : 'Не вдалося відправити заявку.',
+                   !(data && data.status === 'success'), true);
         if (data && data.status==='success') closeCallbackPanel();
       }).catch(function(){ addBotText('Помилка надсилання заявки. Спробуйте пізніше.',true); })
       .finally(function(){ callbackSubmitBtn.disabled=false; saveChatState(); });
@@ -293,7 +403,7 @@
       if (busy || !confirm('Очистити історію діалогу?')) return;
       dialogueState={filters:{},product_ids:[]};chatTurns=[];
       try {localStorage.removeItem(STORAGE_KEY_HTML);localStorage.removeItem(STORAGE_KEY_STATE);localStorage.removeItem(STORAGE_KEY_TURNS);}catch(_){}
-      messagesContainer.innerHTML=buildGreeting();saveChatState();
+      messagesContainer.replaceChildren(safeMarkup(buildGreeting()));saveChatState();
     });
     sendBtn.addEventListener('click', function(){sendTextMessage(inputField.value);});
     inputField.addEventListener('keydown',function(e){
