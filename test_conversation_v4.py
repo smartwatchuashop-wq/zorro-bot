@@ -49,6 +49,32 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(used["max_price"],2000)
         self.assertEqual(used["must_have"]["Можливість розмовляти"],"Так")
 
+    def test_mechanical_request_enforces_verified_mechanism(self):
+        ai={"action":"search","filters":{
+            "category":"Механічні годинники","include":["механічні"],
+            "must_have":{"Тип механізму":["Механічний"]}}}
+        out,search,_=self.run_chat("Покажи чоловічі механічні годинники до 2000 грн",{},ai,1)
+        used=search.call_args.args[1]
+        self.assertEqual(used["max_price"],2000)
+        self.assertEqual(used["category"],"Чоловічі годинники")
+        self.assertEqual(used["watch_type"],"mechanical")
+        self.assertEqual(used["must_have"]["Тип механізму"],"Механічний")
+        self.assertNotIn("include",used)
+
+    def test_steel_skmei_handles_one_item_gemini_lists(self):
+        ai={"action":"search","filters":{
+            "category":"Чоловічий годинник",
+            "must_have":{"Матеріал ремінця":["Сталевий"]},
+            "include":["сталевий"],"brand":"Skmei"}}
+        out,search,_=self.run_chat(
+            "Покажи чоловічий годинник Skmei зі сталевим ремінцем до 2000 грн",{},ai,1)
+        used=search.call_args.args[1]
+        self.assertEqual(used["category"],"Чоловічі годинники")
+        self.assertEqual(used["must_have"]["Матеріал ремінця"],"Сталевий")
+        self.assertEqual(used["brand"],"Skmei")
+        self.assertEqual(used["max_price"],2000)
+        self.assertNotIn("include",used)
+
     def test_compare_exact_two_items(self):
         state={"filters":{"max_price":2000},"product_ids":["101","202","303"]}
         result,search,compare=self.run_chat("Порівняй перший і третій",state,{"action":"compare","filters":{}},0)
