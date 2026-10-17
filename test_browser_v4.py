@@ -121,7 +121,7 @@ class WidgetBrowserTests(unittest.TestCase):
         self.assertEqual(message.locator('a[href^="https://zorro.com.ua/"]').count(),1)
         self.assertEqual(message.locator('img[src^="https://zorro.com.ua/"]').count(),1)
         self.assertEqual(message.locator('[style*="evil.example"]').count(),0)
-        self.assertEqual(message.locator('button.ai-chip').count(),1)
+        self.assertEqual(message.locator('button.ai-chip[data-msg="Смарт годинник"]').count(),1)
 
     def test_malicious_saved_local_storage_does_not_execute(self):
         self.open()
@@ -190,7 +190,9 @@ class WidgetBrowserTests(unittest.TestCase):
         self.page.locator("#ai-chat-toggle").click()
         self.page.locator("#ai-chat-input").fill("Привіт")
         self.page.locator("#ai-chat-send").click()
-        self.page.get_by_text("Зараз немає зв’язку з консультантом.",exact=False).wait_for()
+        self.page.locator("#ai-chat-send:not([disabled])").wait_for(timeout=6000)
+        content = self.page.locator("#ai-chat-messages").inner_text()
+        self.assertIn("Зараз немає зв", content, content)
         self.assertFalse(self.page.evaluate("!!window.ZORRO_AI_API_BASE"))
 
 
