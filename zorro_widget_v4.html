@@ -193,7 +193,8 @@
         if (url.protocol !== 'https:' || url.username || url.password) return '';
         // All purchase actions must point to the actual store, never to a
         // supplier, shortened redirect, data: or javascript: link.
-        if (!image && !/^(?:www\.)?zorro\.com\.ua$/i.test(url.hostname)) return '';
+        // Live Zorro catalog confirms that product images also use zorro.com.ua.
+        if (!/^(?:www\.)?zorro\.com\.ua$/i.test(url.hostname)) return '';
         return url.href;
       } catch (_) { return ''; }
     }
