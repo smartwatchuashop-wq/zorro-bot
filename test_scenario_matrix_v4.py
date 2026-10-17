@@ -137,7 +137,9 @@ class ShoppingScenarioMatrix(unittest.TestCase):
                     self.assertTrue(all("leather" not in _material_kinds(
                         (p["attributes"] or {}).get("Матеріал ремінця")) for p in rows))
                     self.assertNotIn("m_unknown",{p["site_id"] for p in rows})
-                    self.assertNotIn("s_unknown",{p["site_id"] for p in rows})
+                    # s_unknown lacks CALLING data but has confirmed silicone: leather exclusion may include it.
+                    if ceiling >= 1600:
+                        self.assertIn("s_unknown",{p["site_id"] for p in rows})
 
     def test_smart_calling_restrictions_and_prices(self):
         for ceiling in (500,1000,1500,1600,1695,1800,1900,1995,2000,2500):
