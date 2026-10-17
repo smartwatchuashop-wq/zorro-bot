@@ -105,13 +105,13 @@ def handle_chat(data, connect, render_card, format_text):
         if re.search(r"смарт|smart|розумн\w* годин", message):
             filters["watch_type"]="smart"
         # Hard buyer requirements must survive an AI intent omission.
-        if (re.search(r"без\\s+(?:шкір|шкіри|шкіряного|кожан)", message)
-                or re.search(r"(?:не\\s+шкіря|без\\s+шкіря)", message)):
+        if (re.search(r"без\s+(?:шкір|шкіри|шкіряного|кожан)", message)
+                or re.search(r"(?:не\s+шкіря|без\s+шкіря)", message)):
             exclusions=filters.setdefault("exclude",{})
             if isinstance(exclusions,dict):
                 exclusions["Матеріал ремінця"]=["Шкіряний"]
         if (re.search(r"розмовлят|дзвінк|дзвонит|call(?:ing)?", message)
-                and not re.search(r"(?:без|не потрібн|не треба)\\s+(?:\\w+\\s+){0,2}(?:дзвінк|розмов)", message)):
+                and not re.search(r"(?:без|не потрібн|не треба)\s+(?:\w+\s+){0,2}(?:дзвінк|розмов)", message)):
             required=filters.setdefault("must_have",{})
             if isinstance(required,dict):
                 required["Можливість розмовляти"]="Так"
