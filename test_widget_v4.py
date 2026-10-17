@@ -43,6 +43,40 @@ class WidgetContractTests(unittest.TestCase):
         self.assertIn("setBusy(true)",JS)
         self.assertIn("setBusy(false)",JS)
 
+    def test_untrusted_reply_and_saved_history_are_sanitized(self):
+        self.assertIn("function safeMarkup(raw)", JS)
+        self.assertIn("div.appendChild(safeMarkup(text))", JS)
+        self.assertIn("safeMarkup(savedHtml && savedHtml.trim()", JS)
+        self.assertNotIn("div.innerHTML = String(text || '')", JS)
+        self.assertNotIn("messagesContainer.innerHTML = savedHtml", JS)
+        self.assertIn("blocked[tag]", JS)
+        for dangerous in ("SCRIPT:1", "IFRAME:1", "SVG:1", "FORM:1", "OBJECT:1"):
+            self.assertIn(dangerous, JS)
+        self.assertIn("node.style.getPropertyValue(prop)", JS)
+
+    def test_product_purchase_urls_allow_only_store_https(self):
+        self.assertIn("function safeLink(raw, image)", JS)
+        self.assertIn("url.protocol !== 'https:'", JS)
+        self.assertIn("zorro", JS)
+        self.assertIn("url.username || url.password", JS)
+        self.assertIn("if (!href) return document.createTextNode", JS)
+        self.assertIn("if (!src) return null", JS)
+
+    def test_callback_messages_never_interpreted_as_html(self):
+        self.assertIn("function addBotText(text, error, plainText)", JS)
+        self.assertIn("if (error || plainText)", JS)
+        self.assertIn("!(data && data.status === 'success'), true", JS)
+
+    def test_widget_never_defaults_to_current_production_backend(self):
+        self.assertIn("window.ZORRO_AI_API_BASE || ''", JS)
+        self.assertNotIn("window.ZORRO_AI_API_BASE || 'https://fastapi-qie2.onrender.com'", JS)
+        self.assertIn("Zorro AI backend URL is not configured", JS)
+
+    def test_category_page_not_mistaken_for_a_product(self):
+        self.assertIn("var productSchema =", JS)
+        self.assertIn("var productArea =", JS)
+        self.assertIn("if (!h1 || !productArea && !productSchema) return null", JS)
+
     def test_user_text_not_inserted_as_html(self):
         self.assertIn("span.textContent = text",JS)
         self.assertNotIn("userMsgDiv.innerHTML",JS)
