@@ -48,6 +48,7 @@ class ChatInput(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     current_product: str | None = None
     history: list[Msg] = Field(default_factory=list)
+    state: dict = Field(default_factory=dict)
 
 class CallbackInput(BaseModel):
     phone: str
@@ -907,40 +908,12 @@ def catalog_status():
 
 @app.post("/api/chat")
 def chat(data: ChatInput):
+    from conversation_v4 import handle_chat
     try:
-        conn = db()
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    "SELECT site_id, name, category, price, available, vendor, description, url, image, attributes, sku FROM zorro_products_v2 WHERE available=TRUE"
-                )
-                rows = [dict(p) for p in cur.fetchall()]
-        finally:
-            conn.close()
+        return handle_chat(data, db, product_html, format_ai_text)
     except Exception:
-        LOG.exception("Catalog query error")
-        return {"reply": "Каталог тимчасово недоступний. Спробуйте трохи пізніше."}
-
-    if not rows:
-        return {"reply": "Каталог ще завантажується. Спробуйте за хвилину."}
-
-    intent = build_intent(data)
-    products = select_products(rows, intent, limit=3)
-
-    if not products:
-        return {"reply": "Не знайшов годинників, які точно відповідають усім вимогам. Що можна змінити у побажаннях?"}
-
-    ai_text = ask_gemini_consultant(data, products, intent)
-    response = "<div style='line-height:1.4;'>" + format_ai_text(ai_text) + "</div>"
-    response += "".join(product_html(p) for p in products)
-    response += """
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;">
-        <button class="ai-chip" data-msg="Розкажи детальніше про ці моделі">📄 Опис моделей</button>
-        <button class="ai-chip" data-msg="Порівняй ці моделі між собою">⚖️ Порівняти моделі</button>
-        <button class="ai-chip" data-action="call-modal">📞 Замовити дзвінок менеджера</button>
-    </div>
-    """
-    return {"reply": response}
+        LOG.exception("v4 chat failed")
+        return {"reply": "Виникла помилка консультації. Будь ласка, спробуйте ще раз.", "state": data.state}
 
 @app.post("/api/callback")
 def callback(data: CallbackInput):

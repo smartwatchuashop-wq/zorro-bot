@@ -1,0 +1,36 @@
+name: Zorro v4 search tests
+on:
+  push:
+    branches: [zorro-hybrid-search-v4]
+  pull_request:
+    branches: [main]
+jobs:
+  search-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zorro_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: zorro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d zorro_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:zorro_test@localhost:5432/zorro_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependency
+        run: python -m pip install -r requirements.txt httpx
+      - name: Compile v4 modules
+        run: python -m py_compile main.py staging_main.py staging_smoke_v4.py staging_acceptance_v4.py search_v4.py conversation_v4.py test_search_v4.py test_conversation_v4.py test_api_v4.py test_postgres_v4.py test_widget_v4.py test_staging_v4.py test_scenario_matrix_v4.py test_dialogue_matrix_v4.py
+      - name: Run isolated PostgreSQL and mocked dialogue regression tests
+        run: python -m unittest -v test_search_v4.py test_conversation_v4.py test_api_v4.py test_postgres_v4.py test_widget_v4.py test_staging_v4.py test_scenario_matrix_v4.py test_dialogue_matrix_v4.py

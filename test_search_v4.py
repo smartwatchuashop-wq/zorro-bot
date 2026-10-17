@@ -1,0 +1,214 @@
+"""Offline regression tests for search_v4 (run: python -m unittest test_search_v4.py)."""
+import unittest
+from unittest.mock import patch
+from search_v4 import search_products, compare_by_ids
+
+class Cursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.sql = ""
+        self.args = []
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def execute(self, sql, args): self.sql, self.args = sql, args
+    def fetchall(self): return self.rows
+
+class DB:
+    def __init__(self, rows): self.cur = Cursor(rows)
+    def cursor(self, **kwargs): return self.cur
+
+def watch(id, name, price=1200, vendor="Skmei", strap="Сталевий"):
+    return dict(site_id=id, sku=id, name=name, vendor=vendor,
+                category="Чоловічі годинники", price=price, available=True,
+                url="https://zorro.com.ua/product", image="", description="",
+                attributes={"Матеріал ремінця": strap})
+
+class RetrievalTests(unittest.TestCase):
+    def test_strict_material(self):
+        db=DB([watch("1","Steel"),watch("2","Leather",strap="Шкіряний")])
+        r=search_products(db,{"must_have":{"Матеріал ремінця":"Сталевий"}})
+        self.assertEqual([p["site_id"] for p in r],["1"])
+    def test_negative_material(self):
+        db=DB([watch("1","Steel"),watch("2","Leather",strap="Шкіряний")])
+        r=search_products(db,{"exclude":{"Матеріал ремінця":["Шкіряний"]}})
+        self.assertEqual([p["site_id"] for p in r],["1"])
+    def test_broad_budget_picks_distinct_price_tiers(self):
+        watches=[watch(str(i),"Watch "+str(i),price=price,
+                       vendor=("Skmei" if i%2 else "Casio")) for i,price in
+                 enumerate([495,550,800,1050,1295,1450,1600,1795,1950],1)]
+        found=search_products(DB(watches),{"max_price":2000},limit=3)
+        prices=[float(p["price"]) for p in found]
+        self.assertEqual(len(prices),3)
+        self.assertEqual(prices,sorted(prices))
+        self.assertGreater(max(prices)-min(prices),500)
+        self.assertTrue(all(p <= 2000 for p in prices))
+
+    def test_specific_keyword_preserves_relevance_not_price_tiers(self):
+        rows=[watch(str(i),"Sport Watch "+str(i),price=price) for i,price in
+              enumerate([500,550,600,1250,1400,1550,1800,1900],1)]
+        found=search_products(DB(rows),{"max_price":2000,"include":["Sport"]},limit=3)
+        self.assertEqual([float(x["price"]) for x in found],[500,550,600])
+
+    def test_narrow_price_band_does_not_invent_price_tiers(self):
+        rows=[watch(str(i),"Watch "+str(i),price=price) for i,price in
+              enumerate([1450,1460,1470,1480,1490,1500],1)]
+        found=search_products(DB(rows),{"max_price":1500},limit=3)
+        self.assertEqual([float(x["price"]) for x in found],[1450,1460,1470])
+
+    def test_duplicate_names(self):
+        db=DB([watch("1","Same"),watch("2","Same")])
+        self.assertEqual(len(search_products(db,{})),1)
+    def test_budget_enforced_in_sql(self):
+        db=DB([])
+        search_products(db,{"max_price":2000})
+        self.assertIn("price <= %s",db.cur.sql)
+        self.assertEqual(db.cur.args,["%годинник%",2000])
+    def test_compare_keeps_previous_order(self):
+        db=DB([watch("b","Second"),watch("a","First")])
+        r=compare_by_ids(db,["a","b"])
+        self.assertEqual([p["site_id"] for p in r],["a","b"])
+    def test_compare_numeric_db_ids_against_string_widget_ids(self):
+        p=watch(101,"First")
+        q=watch(202,"Second")
+        r=compare_by_ids(DB([q,p]),["101","202"])
+        self.assertEqual([x["site_id"] for x in r],[101,202])
+
+    def test_missing_required_attribute_rejected(self):
+        p=watch("3","Unverified")
+        p["attributes"]={}
+        self.assertEqual(search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталевий"}}),[])
+
+    def test_positive_keywords_require_evidence(self):
+        self.assertEqual(search_products(DB([watch("1","Steel")]),{"include":["компас"]}),[])
+
+    def test_unknown_material_does_not_pass_exclusion(self):
+        p=watch("3","Unverified")
+        p["attributes"]={}
+        r=search_products(DB([p]),{"exclude":{"Матеріал ремінця":["Шкіряний"]}})
+        self.assertEqual(r,[])
+
+    def test_wrong_exclusion_shape_rejected(self):
+        with self.assertRaises(ValueError):
+            search_products(DB([]),{"exclude":{"Матеріал ремінця":"Шкіряний"}})
+
+    def test_male_audience_filter(self):
+        male=watch("1","Skmei чоловічий")
+        female=watch("2","Skmei жіночий")
+        female["category"]="Жіночі годинники"
+        r=search_products(DB([male,female]),{"audience":"men"})
+        self.assertEqual([p["site_id"] for p in r],["1"])
+
+    def test_no_smart_watch_for_quartz_requirement(self):
+        smart=watch("1","Смарт годинник")
+        quartz=watch("2","Кварцовий годинник")
+        r=search_products(DB([smart,quartz]),{"watch_type":"quartz"})
+        self.assertEqual([p["site_id"] for p in r],["2"])
+
+    def test_smart_product_with_quartz_keyword_is_not_quartz_watch(self):
+        smart=watch("1","Smart Watch кварц")
+        smart["category"]="Смарт-годинники"
+        classic=watch("2","Кварцовий чоловічий годинник")
+        found=search_products(DB([smart,classic]),{"watch_type":"quartz"})
+        self.assertEqual([p["site_id"] for p in found],["2"])
+
+    def test_mechanical_watch_is_not_smart_even_with_function_terms(self):
+        smart=watch("1","Smart механічний стиль")
+        smart["category"]="Смарт-годинники"
+        mechanical=watch("2","Механічний годинник")
+        found=search_products(DB([smart,mechanical]),{"watch_type":"mechanical"})
+        self.assertEqual([p["site_id"] for p in found],["2"])
+
+    def test_category_filter_parameterized(self):
+        db=DB([])
+        search_products(db,{"category":"Чоловічі"})
+        self.assertIn("category = %s",db.cur.sql)
+        self.assertIn("Чоловічі годинники",db.cur.args)
+
+    def test_calling_not_supported_must_not_match_yes(self):
+        p=watch("1","Smart Calling")
+        p["attributes"]["Можливість розмовляти"]="Ні"
+        found=search_products(DB([p]),{"must_have":{"Можливість розмовляти":"Так"}})
+        self.assertEqual(found,[])
+
+    def test_calling_explicitly_supported_matches_yes(self):
+        p=watch("1","Smart Calling")
+        p["attributes"]["Можливість розмовляти"]="Так"
+        found=search_products(DB([p]),{"must_have":{"Можливість розмовляти":"Так"}})
+        self.assertEqual([x["site_id"] for x in found],["1"])
+
+    def test_empty_or_negative_required_attribute_rejected(self):
+        p=watch("1","No material")
+        p["attributes"]["Матеріал ремінця"]="Немає"
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Немає"}})
+        self.assertEqual(found,[])
+
+    def test_negated_leather_not_positive(self):
+        p=watch("n1","Without leather",strap="Без шкіряного ремінця")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"шкіряного"}})
+        self.assertEqual(found,[])
+
+    def test_negated_calling_is_not_supported(self):
+        p=watch("n2","Smart")
+        p["attributes"]["Можливість розмовляти"]="Не підтримує дзвінки"
+        found=search_products(DB([p]),{"must_have":{"Можливість розмовляти":"дзвінки"}})
+        self.assertEqual(found,[])
+
+    def test_partial_word_is_not_material_match(self):
+        p=watch("n3","Steel")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"стал"}})
+        self.assertEqual(found,[])
+
+    def test_zero_price_excluded_in_sql(self):
+        db=DB([])
+        search_products(db,{})
+        self.assertIn("price > 0",db.cur.sql)
+
+    def test_watch_category_restriction_applied_before_ranking(self):
+        db=DB([])
+        search_products(db,{})
+        self.assertIn("LOWER(category) LIKE %s", db.cur.sql)
+        self.assertIn("%годинник%", db.cur.args)
+
+    def test_russian_steel_material_from_real_supplier(self):
+        p=watch("steel_ru","Steel Watch",strap="Стальной")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталевий"}})
+        self.assertEqual([x["site_id"] for x in found],["steel_ru"])
+
+    def test_supplier_tkaneviy_material_matches_fabric(self):
+        p=watch("fabric","Casual",strap="Тканевий")
+        found=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Тканинний"}})
+        self.assertEqual([x["site_id"] for x in found],["fabric"])
+
+    def test_unavailable_item_not_compared(self):
+        p=watch("x","Old watch")
+        p["available"]=False
+        self.assertEqual(compare_by_ids(DB([p]),["x"]),[])
+
+    def test_leather_synonyms_are_excluded(self):
+        leather=watch("leather","Natural leather",strap="Натуральна шкіра")
+        eco=watch("eco","Eco",strap="Екошкіра")
+        steel=watch("steel","Steel",strap="Нержавіюча сталь")
+        rows=search_products(DB([leather,eco,steel]),{"exclude":{"Матеріал ремінця":["Шкіряний"]}})
+        self.assertEqual([p["site_id"] for p in rows],["steel"])
+
+    def test_steel_synonyms_match(self):
+        p=watch("steel","Steel",strap="Сталевий")
+        rows=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталь"}})
+        self.assertEqual([x["site_id"] for x in rows],["steel"])
+
+    def test_generic_metal_cannot_prove_steel(self):
+        p=watch("metal","Metal",strap="Металевий")
+        rows=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Сталь"}})
+        self.assertEqual(rows,[])
+
+    def test_explicit_nonleather_is_not_a_positive_leather(self):
+        p=watch("nonleather","No leather",strap="Без шкіряного ремінця")
+        rows=search_products(DB([p]),{"must_have":{"Матеріал ремінця":"Шкіряний"}})
+        self.assertEqual(rows,[])
+
+    def test_unknown_filter_rejected(self):
+        with self.assertRaises(ValueError):
+            search_products(DB([]),{"unsafe_sql":"DROP TABLE"})
+
+if __name__ == "__main__":
+    unittest.main()

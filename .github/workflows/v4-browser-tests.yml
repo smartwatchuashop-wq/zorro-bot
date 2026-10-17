@@ -1,0 +1,29 @@
+name: Zorro v4 real browser tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'zorro_widget_v4.html'
+      - 'test_browser_v4.py'
+      - '.github/workflows/v4-browser-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-staging-widget:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install isolated browser test tools
+        run: |
+          python -m pip install 'playwright==1.58.0'
+          python -m playwright install --with-deps chromium
+      - name: Exercise actual HTML in headless Chromium
+        run: python -m unittest -v test_browser_v4.py
