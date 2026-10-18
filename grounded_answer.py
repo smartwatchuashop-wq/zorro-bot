@@ -26,6 +26,19 @@ def _record(p):
             'category': str(p.get('category') or ''), 'attributes': fields}
 
 
+def price_comparisons(products):
+    # Price difference calculated from trusted database rows.
+    out = []
+    for i, a in enumerate(products[:3]):
+        for b in products[i+1:3]:
+            pa, pb = float(a.get('price') or 0), float(b.get('price') or 0)
+            if pa > 0 and pb > 0:
+                out.append({'first_id': str(a.get('site_id')), 'second_id': str(b.get('site_id')),
+                            'difference_uah': round(abs(pa-pb),2),
+                            'cheaper_id': str(a.get('site_id') if pa < pb else b.get('site_id')) if pa != pb else None})
+    return out
+
+
 def validate_response(reply, products, buyer_message, filters=None):
     if not isinstance(reply, str) or not (16 <= len(reply.strip()) <= 1100):
         return False
@@ -33,7 +46,7 @@ def validate_response(reply, products, buyer_message, filters=None):
         return False
     evidence = json.dumps([_record(p) for p in products], ensure_ascii=False).lower()
     # Digits stated about products MUST occur in the retrieved records or question.
-    known_numbers = set(re.findall(r'\d+', evidence + ' ' + str(buyer_message).lower()))
+    known_numbers = set(re.findall(r'\d+', evidence + ' ' + str(buyer_message).lower() + ' ' + json.dumps(price_comparisons(products))))
     if any(n not in known_numbers for n in re.findall(r'\d+', reply.lower())):
         return False
     # Reject unsupported comparative material/quality assertions. No mere
@@ -67,7 +80,8 @@ def natural_reply(gemini_func: Callable, model_parts_func: Callable,
                   purpose: str, user_message: str, products: list,
                   filters: dict, history: list, fallback: str, max_chars: int = 750):
     payload = {'task': purpose, 'question': user_message, 'filters': filters,
-               'history': history[-6:], 'verified_products': [_record(p) for p in products]}
+               'history': history[-6:], 'verified_products': [_record(p) for p in products],
+               'verified_price_differences': price_comparisons(products)}
     instructions = (
         'You are the real sales consultant for the Ukrainian Zorro watch store. '
         'Speak fluently, naturally, empathetically and helpfully IN UKRAINIAN, not like a list generator. '
@@ -78,8 +92,10 @@ def natural_reply(gemini_func: Callable, model_parts_func: Callable,
         'Do not infer greater strength, durability, comfort or shock protection from materials alone. '
         'Do not use stock scripts or boilerplate. '
         'For search: explain briefly WHY the selected models fit the specific customer and ask at most one useful question. '
-        'For comparison: identify practical differences, not just list raw specifications. '
-        'For recommendation: give your personal recommendation among these products and a concise real reason. '
+        'For comparison: explicitly identify EACH compared model and practical differences, not just one. '
+        'If buyer asks which is better and why, compare all referenced models AND offer a reasoned conditional choice. '
+        'Only use verified_price_differences for numeric price comparisons. '
+        'For recommendation: recommend a verified model among these products and explain the trade-off. '
         'For description: answer the actual question clearly. '
         'Ground EVERY concrete product claim in the EXACT verified_products fields. '
         'Never infer swimming suitability from ATM, health diagnostics from sensors, ruggedness from design, '

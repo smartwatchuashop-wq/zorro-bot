@@ -27,7 +27,7 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 DB_URL = os.getenv("DATABASE_URL", "")
 KEY = os.getenv("GEMINI_API_KEY", "")
 
-app = FastAPI(title="Zorro AI Consultant", version="6.1")
+app = FastAPI(title="Zorro AI Consultant", version="7.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 CATEGORIES = {
@@ -395,8 +395,9 @@ def gemini(contents: list[dict], system: str, tools: list[dict] | None = None, j
                "contents": contents, "generationConfig": options}
     if tools:
         payload["tools"] = tools
-        payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames":
-                            ["search_catalog", "compare_watches", "describe_watch", "store_information", "ask_customer", "recommend_shown"]}}
+        allowed = [dec.get("name") for group in tools for dec in group.get("functionDeclarations", [])
+                   if isinstance(dec, dict) and isinstance(dec.get("name"), str)]
+        payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": allowed}}
     resp = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
                          headers={"x-goog-api-key": KEY}, json=payload, timeout=28)
     resp.raise_for_status()
@@ -505,7 +506,7 @@ def merge_filter_state(previous: dict, raw: dict, question: str) -> dict:
             v = v[:90]
         result[k] = v
     # Deterministic overrides for clear explicit customer requests.
-    budget = re.search(r"\bдо\s*(\d[\d ]*)\s*(?:грн|₴)?", text)
+    budget = re.search(r"\bдо\s*(\d[\d ]*)\s*(?:грн|₴|гривень|гривні)\b", text)
     if budget:
         result["max_price"] = int(budget.group(1).replace(" ", ""))
     if re.search(r"без\s+(?:шкір|шкіря|кожан)", text):
@@ -841,184 +842,14 @@ def no_results_message(filters: dict, question: str = "") -> str:
 
 
 def chat_controller(data: ChatIn) -> dict:
-    current = data.state if isinstance(data.state, dict) else {}
-    state = {"filters": current.get("filters") if isinstance(current.get("filters"), dict) else {},
-             "product_ids": [str(i) for i in current.get("product_ids", [])[:10]] if isinstance(current.get("product_ids"), list) else [],
-             "search_intent": str(current.get("search_intent") or "")[:350],
-             "buyer_profile": clean_profile(current.get("buyer_profile"))}
-    history = [{"role": p.role[:10], "content": re.sub(r"<[^>]*>", " ", p.content)[:450]}
-               for p in data.history[-10:] if p.role in ("user", "assistant")]
-    message = data.message.strip()
-    context = {"latest_message": message, "current_product_title": data.current_product,
-               "current_filters": state["filters"], "buyer_profile": state["buyer_profile"],
-               "previous_shown_ids": state["product_ids"],
-               "recent_dialogue": history[-8:]}
-    first, tool, args = None, None, {}
-    try:
-        tool, args, first = select_action(message, history, state, data.current_product)
-    except Exception as ex:
-        LOG.warning("Gemini intent fallback: %s", type(ex).__name__)
-        lower = norm(message)
-        if re.search(r"який.{0,35}(?:кращ|порад|вибрат)|що.{0,25}взяти|котрий.{0,25}порад", lower) and state["product_ids"]:
-            tool = "recommend_shown"
-        elif re.search(r"порівн|порівняй", lower):
-            tool = "compare_watches"
-        elif re.search(r"опис|характеристик|детальн", lower) and state["product_ids"]:
-            tool = "describe_watch"
-        elif re.search(r"достав|оплат|гарант|повернен", lower):
-            tool = "store_information"
-        else:
-            tool, args = "search_catalog", {"mode": "refine"}
-    proposed_update = args.get("profile_update", {}) if isinstance(args, dict) else {}
-    if tool != "search_catalog":
-        state["buyer_profile"] = merge_profile(state["buyer_profile"], proposed_update,
-                                                 previously_shown=state["product_ids"])
-    if tool == "store_information":
-        return {"reply": "Умови доставки, оплати, повернення та гарантії перевіряйте на сторінках магазину Zorro — не хочу повідомляти непідтверджені дані.",
-                "products": [], "state": state}
-    if tool == "ask_customer":
-        question = clean_sales_line(args.get("question") if isinstance(args, dict) else "", 130)
-        if not question:
-            question = "Для кого підбираємо годинник і який приблизно бюджет?"
-        if "?" not in question:
-            question = question.rstrip(".") + "?"
-        return {"reply": "З радістю допоможу з вибором. " + question,
-                "products": [], "state": state}
-    # Buyer preference to hear an opinion is distinct from asking for
-    # a full comparison. Never choose a product not previously shown.
-    if state["product_ids"] and re.search(
-        r"який.{0,35}(?:кращ|порад|вибрат)|що.{0,25}взяти|котрий.{0,25}порад", norm(message)
-    ):
-        tool = "recommend_shown"
-    if tool == "recommend_shown":
-        products = [p for p in get_ids(state["product_ids"])
-                    if str(p["site_id"]) not in state["buyer_profile"]["rejected_ids"]]
-        if not products:
-            return {"reply": "Ці моделі більше не розглядаємо. Підібрати інші за вашими побажаннями?",
-                    "products": [], "state": state}
-        return {"reply": sales_reply("recommend", message, products, state["filters"], history, lambda: personal_recommendation(products, message, {**state["filters"], "buyer_profile": state["buyer_profile"]}), state["buyer_profile"]),
-                "products": [], "state": state}
-    if tool == "compare_watches":
-        ids = state["product_ids"]
-        positions = args.get("positions") if isinstance(args, dict) else None
-        chosen_ids = args.get("ids") if isinstance(args, dict) else None
-        if isinstance(positions, list) and positions:
-            selected = [ids[i-1] for i in positions if type(i) is int and 1 <= i <= len(ids)]
-        elif isinstance(chosen_ids, list) and chosen_ids:
-            selected = [str(i) for i in chosen_ids if str(i) in ids]
-        else:
-            selected = list(ids)
-        text = norm(message)
-        if re.search(r"перш.*трет", text) and len(ids) >= 3:
-            selected = [ids[0], ids[2]]
-        elif re.search(r"перш.*друг", text) and len(ids) >= 2:
-            selected = [ids[0], ids[1]]
-        products = get_ids(selected)
-        reply = sales_reply("compare", message, products, state["filters"], history,
-                            lambda: compare_text(products, message, {**state["filters"], "buyer_profile": state["buyer_profile"]}),
-                            state["buyer_profile"])
-        if isinstance(args, dict) and args.get("also_search") is True:
-            query = (state.get("search_intent") or "") + " " + message + " " + retrieval_context(state["buyer_profile"])
-            alternatives = [p for p in shortlist(state["filters"], query, 120)
-                            if str(p["site_id"]) not in ids
-                            and str(p["site_id"]) not in state["buyer_profile"]["rejected_ids"]
-                            and not dislikes_product(p, state["buyer_profile"])][:3]
-            if alternatives:
-                reply += "\n\nТакож знайшов інші варіанти за вашими побажаннями — вони у картках нижче."
-                state["product_ids"] = [str(p["site_id"]) for p in alternatives]
-                return {"reply": reply, "products": [render_product(p) for p in alternatives], "state": state}
-        return {"reply": reply, "products": [], "state": state}
-    if tool == "describe_watch":
-        ids = state["product_ids"]
-        target = str(args.get("id") or "") if isinstance(args, dict) else ""
-        position = args.get("position") if isinstance(args, dict) else None
-        if not target and type(position) is int and 1 <= position <= len(ids):
-            target = ids[position-1]
-        if not target:
-            # The GTM card button sends a product NAME, not its ID.
-            previous_products = get_ids(ids)
-            for previous in previous_products:
-                if norm(previous.get("name")) and norm(previous["name"]) in norm(message):
-                    target = str(previous["site_id"])
-                    break
-        if not target:
-            text = norm(message)
-            if "перш" in text and ids: target = ids[0]
-            elif "друг" in text and len(ids) >= 2: target = ids[1]
-            elif "трет" in text and len(ids) >= 3: target = ids[2]
-            elif len(ids) == 1: target = ids[0]
-        products = get_ids([target]) if target in ids else []
-        if not products and data.current_product:
-            hit = find_current_product(data.current_product)
-            products = [hit] if hit else []
-        if not products:
-            return {"reply": "Про яку саме модель із показаних розповісти? Напишіть її назву або номер.",
-                    "products": [], "state": state}
-        return {"reply": sales_reply("describe", message, products, state["filters"], history, lambda: describe_text(products[0], message, {**state["filters"], "buyer_profile": state["buyer_profile"]}), state["buyer_profile"]), "products": [], "state": state}
-    if tool != "search_catalog":
-        tool, args = "search_catalog", {"mode": "refine"}
-    filters = merge_filter_state(state["filters"], args if isinstance(args, dict) else {}, message)
-    new_topic = (bool(state["filters"].get("category") and filters.get("category")
-                      and state["filters"]["category"] != filters["category"])
-                 or bool(re.search(r"новий пошук|почн\w* спочатку|забудь попередн", norm(message))))
-    state["buyer_profile"] = merge_profile(state["buyer_profile"], proposed_update, new_topic,
-                                             previously_shown=state["product_ids"])
-    if (state["product_ids"] and re.search(r"дешевш|подешевше|бюджетніш", norm(message))
-            and not re.search(r"\bдо\s*\d|\bвід\s*\d", norm(message))):
-        recent = get_ids(state["product_ids"])
-        if recent:
-            cheaper_than = max(1, int(min(float(p["price"]) for p in recent)) - 1)
-            current_bound = filters.get("max_price")
-            filters["max_price"] = min(int(current_bound), cheaper_than) if current_bound is not None else cheaper_than
-    if not filters and not re.search(r"годин|watch|смарт|подарун|skmei", norm(message)):
-        return {"reply": "Які годинники шукаєте та який бажаний бюджет?", "products": [], "state": state}
-    # Semantic query keeps the buyer's true intention during brief follow-ups.
-    prior_intent = state.get("search_intent") or ""
-    changes_only = bool(re.search(r"^(?:а )?(дешевш|подешевш|дорожч|без |ще |із |з |тільки |менш )", norm(message)))
-    semantic_query = (prior_intent + " " + message).strip() if changes_only and prior_intent and args.get("mode") != "new" and not determine_category(message) else message
-    if isinstance(args.get("search_query"), str) and args["search_query"].strip():
-        proposed = re.sub(r"[\r\n]+", " ", args["search_query"]).strip()[:240]
-        # Gemini is allowed to paraphrase query semantics, not bypass catalog filters.
-        semantic_query = (prior_intent + " " + proposed).strip() if changes_only and prior_intent else proposed
-    if filters.get("category") and norm(filters["category"]) not in norm(semantic_query):
-        semantic_query += " " + filters["category"]
-    # Gemini-proposed soft synonyms expand vector retrieval; mandatory criteria
-    # still come exclusively from PostgreSQL fields, never from synonyms.
-    expansion = [str(k).strip()[:45] for k in (filters.get("keywords") or [])[:4]
-                 if isinstance(k, str) and str(k).strip()]
-    retrieval_query = (semantic_query + " " + " ".join(expansion) + " " +
-                       retrieval_context(state["buyer_profile"])).strip()[:500]
-    # Retrieve broadly before applying free-form dislikes, so the first page of
-    # vector results cannot crowd out valid alternatives without that feature.
-    candidates = shortlist(filters, retrieval_query, 120)
-    # A missing attribute is UNKNOWN, never evidence of absence.
-    candidates = [p for p in candidates
-                  if str(p["site_id"]) not in state["buyer_profile"]["rejected_ids"]
-                  and not dislikes_product(p, state["buyer_profile"])][:36]
-    if not candidates:
-        return {"reply": no_results_message(filters, message), "products": [],
-                "state": {"filters": filters, "product_ids": [], "search_intent": semantic_query[:350],
-                          "buyer_profile": state["buyer_profile"]}}
-    context["buyer_profile"] = state["buyer_profile"]
-    plan = (choose_with_gemini(first, tool, context, candidates, "search", with_advice=True)
-            if first else {"ids": [str(p["site_id"]) for p in candidates[:3]],
-                           "lead": "", "question": "", "focus": {}})
-    if isinstance(plan, list):  # compatibility with earlier v5 callers
-        plan = {"ids": plan, "lead": "", "question": "", "focus": {}}
-    by_id = {str(p["site_id"]): p for p in candidates}
-    selected = [by_id[i] for i in plan.get("ids", []) if i in by_id][:3]
-    if not selected:
-        selected = candidates[:3]
-    reply = sales_reply("search", message, selected, filters, history,
-                        lambda: human_search_reply(selected, filters, plan), state["buyer_profile"])
-    return {"reply": reply, "products": [render_product(p) for p in selected],
-            "state": {"filters": filters, "product_ids": [str(p["site_id"]) for p in selected],
-                       "search_intent": semantic_query[:350], "buyer_profile": state["buyer_profile"]}}
+    """v7 multi-action orchestration: one planner can request multiple safe actions."""
+    from consultation_v7 import run
+    return run(data)
 
 
 @app.get("/")
 def root():
-    return {"status": "ok", "name": "Zorro AI", "version": "6.1", "model": MODEL}
+    return {"status": "ok", "name": "Zorro AI", "version": "7.0", "model": MODEL}
 
 
 @app.get("/api/catalog-status")
@@ -1036,6 +867,12 @@ def catalog_status():
             return result
     finally:
         connection.close()
+
+
+@app.get("/api/quality-status")
+def quality_status():
+    from quality_telemetry import snapshot
+    return snapshot()
 
 
 @app.post("/api/chat")
