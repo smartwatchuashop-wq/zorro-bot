@@ -8,6 +8,7 @@ import json
 import logging
 import re
 from typing import Callable
+from buyer_profile import clean_profile, verified_absence
 
 LOG = logging.getLogger('zorro.grounded')
 RISKY = re.compile(r'\b(gps|nfc|wi.?fi|esim|sim|екг|кисень|цукор|глюкоз|тиск|водостійк|'
@@ -25,7 +26,7 @@ def _record(p):
             'category': str(p.get('category') or ''), 'attributes': fields}
 
 
-def validate_response(reply, products, buyer_message):
+def validate_response(reply, products, buyer_message, filters=None):
     if not isinstance(reply, str) or not (16 <= len(reply.strip()) <= 1100):
         return False
     if re.search(r'https?://|<[^>]+>', reply, re.I):
@@ -35,12 +36,30 @@ def validate_response(reply, products, buyer_message):
     known_numbers = set(re.findall(r'\d+', evidence + ' ' + str(buyer_message).lower()))
     if any(n not in known_numbers for n in re.findall(r'\d+', reply.lower())):
         return False
-    # Sensitive attributes cannot be invented in product recommendations.
-    # Words may appear as part of a customer's question, so permit matching the
-    # customer's wording; still enforce the facts via model prompt.
-    for matched in RISKY.findall(reply):
-        if not re.search(re.escape(matched), evidence, re.I) and not re.search(re.escape(matched), buyer_message, re.I):
-            return False
+    # Reject unsupported comparative material/quality assertions. No mere
+    # listing of carbon or mineral glass proves a watch is stronger.
+    if re.search(r'міцніш|надійніш|ударостійкіш|водостійкіш|краще захищен|'
+                 r'більш захищен|зручніш|витриваліш|довговічніш', reply, re.I):
+        return False
+    # v6 wrongly treated buyer's own requested feature as evidence. Do not.
+    for found in RISKY.finditer(reply):
+        word = found.group(0)
+        if not re.search(re.escape(word), evidence, re.I):
+            context = reply[max(0, found.start() - 55):found.end() + 38]
+            # Honest disclosure of unknown properties is permitted.
+            if not re.search(r'не підтвердж|немає даних|не зазначен|невідом|не можу гарантув', context, re.I):
+                return False
+    # An unknown catalog field is not proof that an unwanted function is ABSENT.
+    # Do not say 'these models have no compass' unless the database proves it.
+    profile = clean_profile((filters or {}).get('buyer_profile'))
+    for pref in profile['preferences']:
+        if pref['status'] != 'avoid':
+            continue
+        feature = pref['feature']
+        root = feature.casefold()[:5]
+        if root and re.search(r'\bбез\b.{0,35}' + re.escape(root), reply.casefold()):
+            if not all(verified_absence(p, feature) for p in products):
+                return False
     return True
 
 
@@ -52,7 +71,11 @@ def natural_reply(gemini_func: Callable, model_parts_func: Callable,
     instructions = (
         'You are the real sales consultant for the Ukrainian Zorro watch store. '
         'Speak fluently, naturally, empathetically and helpfully IN UKRAINIAN, not like a list generator. '
-        'Use the recent conversation, adapt to shopper\'s intentions and explain tradeoffs. '
+        'Use recent conversation and filters.buyer_profile: goals, preferences, indifferent and avoided features. '
+        'If a feature is merely unimportant, do not treat it as forbidden, and do not ask irrelevant styling questions. '
+        'Address latest objection BEFORE making a new suggestion. '
+        'Use verified differences, including price differences, and explain the trade-offs. '
+        'Do not infer greater strength, durability, comfort or shock protection from materials alone. '
         'Do not use stock scripts or boilerplate. '
         'For search: explain briefly WHY the selected models fit the specific customer and ask at most one useful question. '
         'For comparison: identify practical differences, not just list raw specifications. '
@@ -71,7 +94,7 @@ def natural_reply(gemini_func: Callable, model_parts_func: Callable,
                              instructions, json_mode=True)
         raw = ''.join(part.get('text', '') for part in model_parts_func(result))
         candidate = json.loads(raw).get('reply', '')
-        if validate_response(candidate, products, user_message):
+        if validate_response(candidate, products, user_message, filters):
             return candidate[:max_chars]
         LOG.warning('Rejected unsupported/nonnumeric model response (%s)', purpose)
     except Exception as exc:

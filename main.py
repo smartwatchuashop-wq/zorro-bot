@@ -19,6 +19,7 @@ from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 from hybrid_search import ranked_ids, reciprocal_rank_fusion, index_status
 from grounded_answer import natural_reply
+from buyer_profile import clean_profile, merge_profile, retrieval_context, dislikes_product
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger("zorro.ai")
@@ -26,7 +27,7 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 DB_URL = os.getenv("DATABASE_URL", "")
 KEY = os.getenv("GEMINI_API_KEY", "")
 
-app = FastAPI(title="Zorro AI Consultant", version="6.0")
+app = FastAPI(title="Zorro AI Consultant", version="6.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 CATEGORIES = {
@@ -287,8 +288,10 @@ def shortlist(filters: dict, query: str, count: int = 36) -> list[dict]:
 
 
 def sales_reply(purpose: str, message: str, products: list[dict], filters: dict,
-                history: list[dict], fallback) -> str:
-    return natural_reply(gemini, model_parts, purpose, message, products, filters,
+                history: list[dict], fallback, buyer_profile: dict | None = None) -> str:
+    enriched = dict(filters)
+    enriched["buyer_profile"] = clean_profile(buyer_profile)
+    return natural_reply(gemini, model_parts, purpose, message, products, enriched,
                          history, fallback)
 
 def get_ids(ids: list[str]) -> list[dict]:
@@ -323,7 +326,21 @@ def find_current_product(title: str | None) -> dict | None:
 
 
 def tool_declarations() -> list[dict]:
-    return [{"functionDeclarations": [
+    # The same generic preference update is available in *every* action.
+    # An objection or new preference must not be lost just because Gemini
+    # chose to compare/recommend rather than run a fresh product search.
+    profile_delta = {"type": "OBJECT", "properties": {
+        "reset": {"type": "BOOLEAN", "description": "True only for a completely new shopping goal"},
+        "goal": {"type": "STRING", "description": "Buyer use case, e.g. hiking, gift, everyday work"},
+        "reject_ids": {"type": "ARRAY", "items": {"type": "STRING"}, "description":
+                       "Previous shown IDs that the buyer explicitly rejected, only from previous_shown_ids"},
+        "changes": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+            "feature": {"type": "STRING"},
+            "status": {"type": "STRING", "enum": ["must", "prefer", "avoid", "indifferent", "remove"]}
+        }, "required": ["feature", "status"]}}
+    }}
+    declarations = [
+
         {"name": "search_catalog", "description": "Start a new search or refine the existing watch search. Use this for all shopping and product-discovery requests. Set mode=new if the buyer switches to an unrelated category or asks for a fresh selection. mode=refine to keep the existing needs. Previous filters must NOT be copied into arguments unless explicitly changed in the latest message.",
          "parameters": {"type": "OBJECT", "properties": {
              "mode": {"type": "STRING", "enum": ["new", "refine"]},
@@ -358,7 +375,14 @@ def tool_declarations() -> list[dict]:
         {"name": "recommend_shown", "description": "The buyer asks which of the previously suggested models YOU recommend, which to choose, or which is better for their particular needs. Recommend strictly among the previously shown IDs.",
          "parameters": {"type": "OBJECT", "properties": {"reason": {"type": "STRING"}}}}
 
-    ]}]
+    ]
+    for declaration in declarations:
+        params = declaration.get("parameters", {})
+        params.setdefault("properties", {})["profile_update"] = profile_delta
+        if declaration["name"] in ("compare_watches", "recommend_shown"):
+            params["properties"]["also_search"] = {"type": "BOOLEAN", "description":
+                "True only if the buyer also explicitly requests new alternatives; comparison and search may co-occur"}
+    return [{"functionDeclarations": declarations}]
 
 
 def gemini(contents: list[dict], system: str, tools: list[dict] | None = None, json_mode: bool = False) -> dict:
@@ -394,13 +418,21 @@ def select_action(question: str, history: list[dict], state: dict, current: str 
               "Do not ask again for preferences that the shopper already supplied. "
               "Never invent inventory, prices, capabilities or store policies. "
               "Specify ONLY changes explicitly expressed in the latest user message; do not echo all old filters. "
+              "For ALL tools, use profile_update.changes for ANY new or canceled customer preference. "
+              "must=essential, prefer=desirable, avoid=customer rejects having feature, "
+              "indifferent=feature not important (NOT the same as without!), remove=cancel previous instruction. "
+              "For instance 'compass not needed' means indifferent, NOT avoid. 'without compass' means avoid. "
+              "Do not invent updates without clear user evidence. Preserve prior customer shopping goal. "
+              "If buyer explicitly rejects a previously shown product, add its ID to profile_update.reject_ids. "
+              "If comparing and customer ALSO asks for other models set also_search=true. "
               "For general purpose/style requests, generate 1-4 descriptive synonyms as soft keywords, not false hard facts. "
               "Write search_query with actual customer purpose, not a bland product category. "
               "For 'without SIM but calling', set calling=true and sim=false not keywords 'SIM'. "
               "If the user cancels an earlier constraint, use remove_filters. "
               "Return a function call, never executable SQL.")
     payload = {"latest_message": question, "current_product_title": current,
-               "current_filters": state.get("filters") or {}, "previous_shown_ids": state.get("product_ids") or [],
+               "current_filters": state.get("filters") or {}, "buyer_profile": state.get("buyer_profile") or {},
+               "previous_shown_ids": state.get("product_ids") or [],
                "recent_dialogue": history[-8:]}
     answer = gemini([{"role": "user", "parts": [{"text": json.dumps(payload, ensure_ascii=False)}]}],
                     system, tool_declarations())
@@ -812,12 +844,14 @@ def chat_controller(data: ChatIn) -> dict:
     current = data.state if isinstance(data.state, dict) else {}
     state = {"filters": current.get("filters") if isinstance(current.get("filters"), dict) else {},
              "product_ids": [str(i) for i in current.get("product_ids", [])[:10]] if isinstance(current.get("product_ids"), list) else [],
-             "search_intent": str(current.get("search_intent") or "")[:350]}
+             "search_intent": str(current.get("search_intent") or "")[:350],
+             "buyer_profile": clean_profile(current.get("buyer_profile"))}
     history = [{"role": p.role[:10], "content": re.sub(r"<[^>]*>", " ", p.content)[:450]}
                for p in data.history[-10:] if p.role in ("user", "assistant")]
     message = data.message.strip()
     context = {"latest_message": message, "current_product_title": data.current_product,
-               "current_filters": state["filters"], "previous_shown_ids": state["product_ids"],
+               "current_filters": state["filters"], "buyer_profile": state["buyer_profile"],
+               "previous_shown_ids": state["product_ids"],
                "recent_dialogue": history[-8:]}
     first, tool, args = None, None, {}
     try:
@@ -835,6 +869,10 @@ def chat_controller(data: ChatIn) -> dict:
             tool = "store_information"
         else:
             tool, args = "search_catalog", {"mode": "refine"}
+    proposed_update = args.get("profile_update", {}) if isinstance(args, dict) else {}
+    if tool != "search_catalog":
+        state["buyer_profile"] = merge_profile(state["buyer_profile"], proposed_update,
+                                                 previously_shown=state["product_ids"])
     if tool == "store_information":
         return {"reply": "Умови доставки, оплати, повернення та гарантії перевіряйте на сторінках магазину Zorro — не хочу повідомляти непідтверджені дані.",
                 "products": [], "state": state}
@@ -853,8 +891,12 @@ def chat_controller(data: ChatIn) -> dict:
     ):
         tool = "recommend_shown"
     if tool == "recommend_shown":
-        products = get_ids(state["product_ids"])
-        return {"reply": sales_reply("recommend", message, products, state["filters"], history, lambda: personal_recommendation(products, message, state["filters"])),
+        products = [p for p in get_ids(state["product_ids"])
+                    if str(p["site_id"]) not in state["buyer_profile"]["rejected_ids"]]
+        if not products:
+            return {"reply": "Ці моделі більше не розглядаємо. Підібрати інші за вашими побажаннями?",
+                    "products": [], "state": state}
+        return {"reply": sales_reply("recommend", message, products, state["filters"], history, lambda: personal_recommendation(products, message, {**state["filters"], "buyer_profile": state["buyer_profile"]}), state["buyer_profile"]),
                 "products": [], "state": state}
     if tool == "compare_watches":
         ids = state["product_ids"]
@@ -872,7 +914,20 @@ def chat_controller(data: ChatIn) -> dict:
         elif re.search(r"перш.*друг", text) and len(ids) >= 2:
             selected = [ids[0], ids[1]]
         products = get_ids(selected)
-        return {"reply": sales_reply("compare", message, products, state["filters"], history, lambda: compare_text(products, message, state["filters"])), "products": [], "state": state}
+        reply = sales_reply("compare", message, products, state["filters"], history,
+                            lambda: compare_text(products, message, {**state["filters"], "buyer_profile": state["buyer_profile"]}),
+                            state["buyer_profile"])
+        if isinstance(args, dict) and args.get("also_search") is True:
+            query = (state.get("search_intent") or "") + " " + message + " " + retrieval_context(state["buyer_profile"])
+            alternatives = [p for p in shortlist(state["filters"], query, 120)
+                            if str(p["site_id"]) not in ids
+                            and str(p["site_id"]) not in state["buyer_profile"]["rejected_ids"]
+                            and not dislikes_product(p, state["buyer_profile"])][:3]
+            if alternatives:
+                reply += "\n\nТакож знайшов інші варіанти за вашими побажаннями — вони у картках нижче."
+                state["product_ids"] = [str(p["site_id"]) for p in alternatives]
+                return {"reply": reply, "products": [render_product(p) for p in alternatives], "state": state}
+        return {"reply": reply, "products": [], "state": state}
     if tool == "describe_watch":
         ids = state["product_ids"]
         target = str(args.get("id") or "") if isinstance(args, dict) else ""
@@ -899,10 +954,15 @@ def chat_controller(data: ChatIn) -> dict:
         if not products:
             return {"reply": "Про яку саме модель із показаних розповісти? Напишіть її назву або номер.",
                     "products": [], "state": state}
-        return {"reply": sales_reply("describe", message, products, state["filters"], history, lambda: describe_text(products[0], message, state["filters"])), "products": [], "state": state}
+        return {"reply": sales_reply("describe", message, products, state["filters"], history, lambda: describe_text(products[0], message, {**state["filters"], "buyer_profile": state["buyer_profile"]}), state["buyer_profile"]), "products": [], "state": state}
     if tool != "search_catalog":
         tool, args = "search_catalog", {"mode": "refine"}
     filters = merge_filter_state(state["filters"], args if isinstance(args, dict) else {}, message)
+    new_topic = (bool(state["filters"].get("category") and filters.get("category")
+                      and state["filters"]["category"] != filters["category"])
+                 or bool(re.search(r"новий пошук|почн\w* спочатку|забудь попередн", norm(message))))
+    state["buyer_profile"] = merge_profile(state["buyer_profile"], proposed_update, new_topic,
+                                             previously_shown=state["product_ids"])
     if (state["product_ids"] and re.search(r"дешевш|подешевше|бюджетніш", norm(message))
             and not re.search(r"\bдо\s*\d|\bвід\s*\d", norm(message))):
         recent = get_ids(state["product_ids"])
@@ -926,11 +986,20 @@ def chat_controller(data: ChatIn) -> dict:
     # still come exclusively from PostgreSQL fields, never from synonyms.
     expansion = [str(k).strip()[:45] for k in (filters.get("keywords") or [])[:4]
                  if isinstance(k, str) and str(k).strip()]
-    retrieval_query = (semantic_query + " " + " ".join(expansion)).strip()[:500]
-    candidates = shortlist(filters, retrieval_query, 36)
+    retrieval_query = (semantic_query + " " + " ".join(expansion) + " " +
+                       retrieval_context(state["buyer_profile"])).strip()[:500]
+    # Retrieve broadly before applying free-form dislikes, so the first page of
+    # vector results cannot crowd out valid alternatives without that feature.
+    candidates = shortlist(filters, retrieval_query, 120)
+    # A missing attribute is UNKNOWN, never evidence of absence.
+    candidates = [p for p in candidates
+                  if str(p["site_id"]) not in state["buyer_profile"]["rejected_ids"]
+                  and not dislikes_product(p, state["buyer_profile"])][:36]
     if not candidates:
         return {"reply": no_results_message(filters, message), "products": [],
-                "state": {"filters": filters, "product_ids": [], "search_intent": semantic_query[:350]}}
+                "state": {"filters": filters, "product_ids": [], "search_intent": semantic_query[:350],
+                          "buyer_profile": state["buyer_profile"]}}
+    context["buyer_profile"] = state["buyer_profile"]
     plan = (choose_with_gemini(first, tool, context, candidates, "search", with_advice=True)
             if first else {"ids": [str(p["site_id"]) for p in candidates[:3]],
                            "lead": "", "question": "", "focus": {}})
@@ -941,14 +1010,15 @@ def chat_controller(data: ChatIn) -> dict:
     if not selected:
         selected = candidates[:3]
     reply = sales_reply("search", message, selected, filters, history,
-                        lambda: human_search_reply(selected, filters, plan))
+                        lambda: human_search_reply(selected, filters, plan), state["buyer_profile"])
     return {"reply": reply, "products": [render_product(p) for p in selected],
-            "state": {"filters": filters, "product_ids": [str(p["site_id"]) for p in selected], "search_intent": semantic_query[:350]}}
+            "state": {"filters": filters, "product_ids": [str(p["site_id"]) for p in selected],
+                       "search_intent": semantic_query[:350], "buyer_profile": state["buyer_profile"]}}
 
 
 @app.get("/")
 def root():
-    return {"status": "ok", "name": "Zorro AI", "version": "6.0", "model": MODEL}
+    return {"status": "ok", "name": "Zorro AI", "version": "6.1", "model": MODEL}
 
 
 @app.get("/api/catalog-status")
