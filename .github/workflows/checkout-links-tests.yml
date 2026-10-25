@@ -1,0 +1,35 @@
+name: Isolated Zorro Checkout Links Tests
+on:
+  push:
+    branches:
+      - feature/zorro-checkout-links-v7-20261025
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Compile Python modules
+        run: python -m py_compile main.py consultation_v7.py sales_actions.py
+      - name: Regression and integration tests (no external calls)
+        run: python -m unittest -v test_sales_actions.py test_checkout_integration.py
+      - name: Validate browser script syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('zorro_widget_checkout_preview.html').read_text()
+          scripts = re.findall(r'<script\b[^>]*>([\s\S]*?)</script>', html, re.I)
+          if not scripts:
+              raise SystemExit('Missing inline widget JS')
+          Path('/tmp/zorro_checkout_preview.js').write_text('\n'.join(scripts))
+          PY
+          node --check /tmp/zorro_checkout_preview.js
