@@ -1,0 +1,478 @@
+<!-- PREVIEW ONLY: checkout links on v7 backend. Do not replace live GTM widget with this v4-derived example. -->
+<div id="ai-chat-widget" style="position: fixed; bottom: 25px; right: 25px; z-index: 9999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  
+  <div id="ai-chat-prompt" style="display: none; position: absolute; bottom: 58px; right: 0; background: #ffffff; color: #222; padding: 10px 14px; border-radius: 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.15); border: 1px solid #ebebeb; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; animation: zorroFadeIn 0.4s ease forwards; align-items: center; gap: 8px;">
+    <span>✨ Потрібна допомога з вибором?</span>
+    <span id="ai-prompt-close" style="color: #999; font-size: 16px; margin-left: 4px; line-height: 1; cursor: pointer;">&times;</span>
+  </div>
+
+  <button id="ai-chat-toggle" style="background: #111111; color: #fff; border: none; padding: 10px 18px; border-radius: 30px; cursor: pointer; font-weight: 600; font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); display: flex; align-items: center; gap: 8px;">
+    <span style="background: linear-gradient(135deg, #7b2cbf, #9d4edd); width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px;">✦</span>
+    <span>Zorro AI</span>
+    <span style="font-size: 10px; color: #aaa; font-weight: 400; text-transform: uppercase;">beta</span>
+  </button>
+
+  <div id="ai-chat-box" style="display: none; width: 360px; height: 550px; background: #ffffff; border-radius: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); flex-direction: column; overflow: hidden; position: absolute; bottom: 58px; right: 0; border: 1px solid #e5e5e5;">
+    
+    <div style="background: #ffffff; color: #111; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px;">
+        <span style="background: linear-gradient(135deg, #7b2cbf, #9d4edd); color: #fff; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px;">✦</span>
+        <span>Zorro AI</span>
+        <span style="font-size: 10px; color: #888; font-weight: normal;">beta</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span id="ai-chat-reset" title="Очистити чат" style="cursor: pointer; color: #888; font-size: 15px; padding: 2px;">↺</span>
+        <span id="ai-chat-close" title="Закрити" style="cursor: pointer; color: #888; font-size: 18px; padding: 2px 4px;">✕</span>
+      </div>
+    </div>
+
+    <!-- Вікно введення номеру для зворотного дзвінка -->
+    <div id="ai-callback-panel" style="display:none; background: #e8f5e9; border-bottom: 1px solid #c8e6c9; padding: 10px 14px; align-items: center; justify-content: space-between; gap: 8px;">
+      <input type="tel" id="ai-callback-phone" placeholder="Введіть ваш номер: 098..." style="flex:1; padding:7px 10px; border:1px solid #a5d6a7; border-radius:6px; font-size:12px; outline:none;">
+      <button id="ai-callback-submit" style="background:#00a046; color:#fff; border:none; padding:7px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Дзвінок</button>
+      <span id="ai-callback-cancel" style="color:#666; font-size:16px; cursor:pointer; padding:0 4px;">&times;</span>
+    </div>
+
+    <div id="ai-chat-messages" style="flex: 1; padding: 12px; overflow-y: auto; font-size: 13px; background: #fafafa; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth;">
+    </div>
+
+    <div id="ai-search-indicator" style="display:none; padding: 8px 14px; background: #fff; border-top: 1px solid #f0f0f0; font-size: 12px; color: #666; align-items: center; gap: 8px;">
+      <div class="rozetka-dots"><span></span><span></span><span></span></div>
+      <span>Шукаю моделі за запитом...</span>
+    </div>
+
+    <div style="padding: 10px 12px; border-top: 1px solid #eee; display: flex; align-items: center; background: #fff; gap: 6px;">
+      <input type="text" id="ai-chat-input" placeholder="Запитайте в Zorro AI..." style="flex: 1; padding: 9px 12px; border: 1px solid #ddd; border-radius: 20px; outline: none; font-size: 13px; color: #111;">
+      <button id="ai-chat-send" style="background: #111; color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px;">➤</button>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes zorroFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .ai-chip {
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 14px;
+    padding: 6px 11px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: #222;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    transition: all 0.15s ease;
+  }
+  .ai-chip:hover {
+    background: #f3f4f6;
+    border-color: #d1d5db;
+  }
+  .rozetka-dots { display: inline-flex; gap: 4px; align-items: center; }
+  .rozetka-dots span { width: 6px; height: 6px; background: #00a046; border-radius: 50%; animation: rozetkaPulse 1.2s infinite ease-in-out; }
+  .rozetka-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .rozetka-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes rozetkaPulse { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1.1); opacity: 1; } }
+</style>
+
+<script>
+  (function() {
+    var toggleBtn = document.getElementById('ai-chat-toggle');
+    var chatBox = document.getElementById('ai-chat-box');
+    var closeBtn = document.getElementById('ai-chat-close');
+    var resetBtn = document.getElementById('ai-chat-reset');
+    var sendBtn = document.getElementById('ai-chat-send');
+    var inputField = document.getElementById('ai-chat-input');
+    var messagesContainer = document.getElementById('ai-chat-messages');
+    var promptBubble = document.getElementById('ai-chat-prompt');
+    var promptClose = document.getElementById('ai-prompt-close');
+    var searchIndicator = document.getElementById('ai-search-indicator');
+
+    var callbackPanel = document.getElementById('ai-callback-panel');
+    var callbackPhoneInput = document.getElementById('ai-callback-phone');
+    var callbackSubmitBtn = document.getElementById('ai-callback-submit');
+    var callbackCancelBtn = document.getElementById('ai-callback-cancel');
+
+    if (!toggleBtn) return;
+    var STORAGE_KEY_HTML = 'zorro_ai_chat_html';
+
+    function getPageProductData() {
+      // Category pages also have H1 headings. Require actual product-page evidence.
+      var productSchemas = document.querySelectorAll('[itemtype*="schema.org/Product"]');
+      // A category listing can have many per-item schemas. Only a unique
+      // Product schema or an actual product gallery identifies a detail page.
+      var productSchema = productSchemas.length === 1 ? productSchemas[0] : null;
+      var productArea = document.querySelector('.product-gallery, .product-detail-gallery');
+      var h1 = document.querySelector('h1.product-title') ||
+               (productSchema && productSchema.querySelector('h1')) ||
+               (productArea && document.querySelector('h1'));
+      if (!h1 || !productArea && !productSchema) return null;
+      var title = h1.innerText.trim();
+      if (!title || title.toLowerCase().includes('каталог')) return null;
+
+      var imgEl = document.querySelector('.product-gallery img') || document.querySelector('.gallery-item img') || document.querySelector('img[itemprop="image"]') || document.querySelector('meta[property="og:image"]');
+      var imgSrc = imgEl ? (imgEl.src || imgEl.getAttribute('content') || '') : '';
+
+      var priceEl = document.querySelector('.product-price') || document.querySelector('.price') || document.querySelector('[itemprop="price"]');
+      var priceText = priceEl ? priceEl.innerText.trim() : '';
+
+      return { title: title, image: imgSrc, price: priceText };
+    }
+
+    var pageProduct = getPageProductData();
+
+    function buildGreeting() {
+      var html = '<div style="background: #ffffff; border: 1px solid #ebebeb; padding: 10px 12px; border-radius: 12px; color: #222; max-width: 85%; line-height: 1.4; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">' +
+        'Привіт! Напиши, що шукаєш — підберу, порівняю або знайду найвигідніший варіант.' +
+      '</div>';
+
+      if (pageProduct) {
+        var safeTitle = escapeHtml(pageProduct.title);
+        html += '<div style="margin-top: 8px;">' +
+          '<div style="font-size: 11px; font-weight: 600; color: #777; margin-bottom: 4px;">Товар, який ви переглядаєте:</div>' +
+          '<div style="background:#ffffff; border:1px solid #e2e5e8; border-radius:12px; padding:10px; box-shadow:0 1px 4px rgba(0,0,0,0.05);">' +
+            '<div style="display:flex; gap:10px; align-items:center;">' +
+              (pageProduct.image ? '<img src="' + escapeHtml(pageProduct.image) + '" style="width:54px; height:54px; object-fit:contain; border-radius:6px; background:#f9fafb; border:1px solid #eee; flex-shrink:0;">' : '') +
+              '<div style="flex:1; min-width:0;">' +
+                '<div style="font-weight:600; font-size:12.5px; color:#111; line-height:1.25; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">' + safeTitle + '</div>' +
+                (pageProduct.price ? '<div style="font-weight:700; font-size:13px; color:#111; margin-top:4px;">' + escapeHtml(pageProduct.price) + '</div>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">' +
+              '<button class="ai-chip" data-msg="Розкажи детальніше опис та характеристики ' + safeTitle + '">📄 Опис товару</button>' +
+              '<button class="ai-chip" data-msg="Покажи схожі моделі до ' + safeTitle + '">🔍 Схожі товари</button>' +
+              '<button class="ai-chip" data-action="call-modal" style="background:#00a046; color:#fff; border-color:#00a046; font-weight:600;">📞 Замовити дзвінок</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      } else {
+        html += '<div id="ai-quick-replies" style="margin-top: 8px;">' +
+          '<div style="font-size: 11.5px; font-weight: 600; color: #666; margin-bottom: 6px;">Підказати варіанти?</div>' +
+          '<div style="display: flex; flex-direction: column; gap: 5px;">' +
+            '<button class="ai-chip" data-msg="Які моделі смарт-годинників мають функцію дзвінків?">📞 Смарт-годинники з функцією дзвінків</button>' +
+            '<button class="ai-chip" data-msg="Підбери водонепроникний годинник для активного спорту">🛡️ Водонепроникні для активного спорту</button>' +
+            '<button class="ai-chip" data-msg="Порадь надійні чоловічі моделі до 2000 грн">💰 Чоловічі моделі до 2000 грн</button>' +
+            '<button class="ai-chip" data-action="call-modal" style="background:#00a046; color:#fff; border-color:#00a046; font-weight:600;">📞 Замовити дзвінок менеджера</button>' +
+          '</div>' +
+        '</div>';
+      }
+      return html;
+    }
+
+    var STORAGE_KEY_STATE = 'zorro_ai_v4_state';
+    var STORAGE_KEY_TURNS = 'zorro_ai_v4_turns';
+    // New HTML key deliberately isolates v4 from the old, HTML-only localStorage.
+    STORAGE_KEY_HTML = 'zorro_ai_v4_html';
+    // Deliberately no production fallback. The integration must explicitly set a backend.
+    var API_BASE = String(window.ZORRO_AI_API_BASE || '').replace(/\/+$/, '');
+    if (API_BASE && !/^https:\/\/[a-z0-9.-]+(?::443)?$/i.test(API_BASE)) API_BASE = '';
+    var dialogueState = {filters:{}, product_ids:[]};
+    var chatTurns = [];
+    var busy = false;
+    try {
+      var remembered = JSON.parse(localStorage.getItem(STORAGE_KEY_STATE) || 'null');
+      if (remembered && typeof remembered === 'object' && !Array.isArray(remembered)) dialogueState = remembered;
+      var turns = JSON.parse(localStorage.getItem(STORAGE_KEY_TURNS) || '[]');
+      if (Array.isArray(turns)) chatTurns = turns.filter(function(t) {
+        return t && (t.role === 'user' || t.role === 'assistant') && typeof t.content === 'string';
+      }).slice(-12);
+    } catch(e) { dialogueState = {filters:{},product_ids:[]}; chatTurns = []; }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, function(c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+    }
+    // Parse untrusted backend/localStorage HTML in an inert template, then
+    // build a fresh DOM containing only safe markup and safe URL protocols.
+    // This intentionally retains inline card styling but discards scripts,
+    // handlers, form controls, embedded objects and remote CSS resources.
+    var SAFE_TAGS = {DIV:1, SPAN:1, P:1, BR:1, B:1, STRONG:1, EM:1,
+                     I:1, SMALL:1, UL:1, OL:1, LI:1, A:1, IMG:1, BUTTON:1};
+    var SAFE_CSS_PROPS = /^(?:display|flex|flex-direction|flex-wrap|flex-shrink|flex-grow|align-items|align-self|justify-content|gap|box-sizing|width|height|min-width|max-width|min-height|max-height|margin|margin-top|margin-bottom|margin-left|margin-right|padding|padding-top|padding-bottom|padding-left|padding-right|border|border-top|border-bottom|border-color|border-radius|box-shadow|background|background-color|color|font-size|font-weight|font-family|line-height|text-align|text-decoration|text-transform|letter-spacing|object-fit|overflow|overflow-wrap|white-space|-webkit-box-orient|-webkit-line-clamp)$/;
+    function safeLink(raw, image) {
+      try {
+        if (!raw || String(raw).length > 2048) return '';
+        var url = new URL(String(raw), window.location.origin);
+        if (url.protocol !== 'https:' || url.username || url.password) return '';
+        // All purchase actions must point to the actual store, never to a
+        // supplier, shortened redirect, data: or javascript: link.
+        // Live Zorro catalog confirms that product images also use zorro.com.ua.
+        if (!/^(?:www\.)?zorro\.com\.ua$/i.test(url.hostname)) return '';
+        return url.href;
+      } catch (_) { return ''; }
+    }
+    function safeMarkup(raw) {
+      var template = document.createElement('template');
+      template.innerHTML = String(raw || '').slice(0, 160000);
+      var fragment = document.createDocumentFragment();
+      var blocked = {SCRIPT:1, STYLE:1, IFRAME:1, OBJECT:1, EMBED:1,
+                     FORM:1, INPUT:1, TEXTAREA:1, SELECT:1, SVG:1,
+                     MATH:1, VIDEO:1, AUDIO:1, BASE:1, LINK:1, META:1};
+      function clean(node) {
+        if (node.nodeType === 3) return document.createTextNode(node.nodeValue);
+        if (node.nodeType !== 1) return null;
+        var tag = node.tagName.toUpperCase();
+        if (blocked[tag]) return null;
+        if (!SAFE_TAGS[tag]) {
+          var text = document.createDocumentFragment();
+          Array.from(node.childNodes).forEach(function(child) {
+            var cleanChild = clean(child);
+            if (cleanChild) text.appendChild(cleanChild);
+          });
+          return text;
+        }
+        var el = document.createElement(tag.toLowerCase());
+        if (tag === 'A') {
+          var href = safeLink(node.getAttribute('href'), false);
+          if (!href) return document.createTextNode(node.textContent || '');
+          el.setAttribute('href', href);
+          el.setAttribute('target', '_self');
+          el.setAttribute('rel', 'noopener noreferrer');
+        }
+        if (tag === 'IMG') {
+          var src = safeLink(node.getAttribute('src'), true);
+          if (!src) return null;
+          el.setAttribute('src', src);
+          el.setAttribute('alt', (node.getAttribute('alt') || '').slice(0, 250));
+          el.setAttribute('loading', 'lazy');
+          el.setAttribute('referrerpolicy', 'no-referrer');
+        }
+        var className = (node.getAttribute('class') || '').split(/\s+/)
+          .filter(function(x) {return x === 'ai-chip' || x === 'ai-card-action';})
+          .join(' ');
+        if (className) el.setAttribute('class', className);
+        if (tag === 'DIV' && node.getAttribute('id') === 'ai-quick-replies') {
+          el.setAttribute('id', 'ai-quick-replies');
+        }
+        if (tag === 'BUTTON' || tag === 'SPAN') {
+          var action = node.getAttribute('data-action');
+          if (['call-modal', 'similar', 'desc'].indexOf(action) !== -1) {
+            el.setAttribute('data-action', action);
+          }
+          if (className.indexOf('ai-chip') !== -1 && node.hasAttribute('data-msg')) {
+            el.setAttribute('data-msg', (node.getAttribute('data-msg') || '').slice(0, 500));
+          }
+          if (node.hasAttribute('data-name')) {
+            el.setAttribute('data-name', (node.getAttribute('data-name') || '').slice(0, 300));
+          }
+        }
+        // Use parsed CSS declarations, not arbitrary cssText from the source.
+        for (var i = 0; i < node.style.length; i++) {
+          var prop = node.style.item(i).toLowerCase();
+          var val = node.style.getPropertyValue(prop);
+          if (!SAFE_CSS_PROPS.test(prop) || val.length > 160 ||
+              /url\s*\(|expression\s*\(|@import|javascript\s*:|data\s*:|var\s*\(|[<>\\]/i.test(val)) continue;
+          el.style.setProperty(prop, val);
+        }
+        if (tag !== 'IMG' && tag !== 'BR') {
+          Array.from(node.childNodes).forEach(function(child) {
+            var cleanChild = clean(child);
+            if (cleanChild) el.appendChild(cleanChild);
+          });
+        }
+        return el;
+      }
+      Array.from(template.content.childNodes).forEach(function(n) {
+        var node = clean(n);
+        if (node) fragment.appendChild(node);
+      });
+      return fragment;
+    }
+
+    function saveChatState() {
+      try {
+        var savedMarkup = messagesContainer.innerHTML;
+        if (savedMarkup.length <= 160000) localStorage.setItem(STORAGE_KEY_HTML, savedMarkup);
+        else localStorage.removeItem(STORAGE_KEY_HTML);
+        localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(dialogueState));
+        localStorage.setItem(STORAGE_KEY_TURNS, JSON.stringify(chatTurns.slice(-12)));
+      } catch (_) {}
+    }
+    function scrollChat() { messagesContainer.scrollTop = messagesContainer.scrollHeight; }
+    function setBusy(next) {
+      busy = next;
+      inputField.disabled = next;
+      sendBtn.disabled = next;
+      if (searchIndicator) searchIndicator.style.display = next ? 'flex' : 'none';
+    }
+    function addUserText(text) {
+      var div = document.createElement('div');
+      div.style.cssText = 'align-self:flex-end;max-width:85%;margin-bottom:4px';
+      var span = document.createElement('span');
+      span.style.cssText = 'background:#111;color:#fff;padding:8px 12px;border-radius:12px;display:inline-block;line-height:1.4;overflow-wrap:anywhere';
+      span.textContent = text; // Never interpret buyer input as HTML.
+      div.appendChild(span);
+      messagesContainer.appendChild(div);
+      scrollChat();
+    }
+
+    // Linkify ONLY exact product names supplied by the backend as verified
+    // catalog records. Never trust model-generated HTML or outbound URLs.
+    function verifiedLinkedText(raw, links) {
+      var text = String(raw || '');
+      var items = (Array.isArray(links) ? links : []).filter(function(item){
+        return item && typeof item.name === 'string' && item.name.length >= 5 &&
+               safeLink(item.url, false);
+      }).sort(function(a,b){return b.name.length - a.name.length;}).slice(0,12);
+      var fragment = document.createDocumentFragment(), cursor = 0, iterations = 0;
+      var lower = text.toLocaleLowerCase();
+      while (cursor < text.length && iterations++ < 80) {
+        var best = null, pos = text.length;
+        items.forEach(function(item) {
+          var at = lower.indexOf(item.name.toLocaleLowerCase(), cursor);
+          if (at >= 0 && at < pos) { pos = at; best = item; }
+        });
+        if (!best) break;
+        if (pos > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor,pos)));
+        var a = document.createElement('a');
+        a.href = safeLink(best.url, false);
+        a.rel = 'noopener noreferrer';
+        a.target = '_self';
+        a.style.cssText = 'color:#3f51b5;text-decoration:underline;font-weight:600';
+        a.textContent = text.slice(pos,pos + best.name.length);
+        fragment.appendChild(a);
+        cursor = pos + best.name.length;
+      }
+      if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
+      return fragment;
+    }
+
+    function addBotText(text, error, plainText, verifiedLinks, checkout) {
+      var div = document.createElement('div');
+      div.style.cssText = 'align-self:flex-start;width:100%;margin-bottom:6px;line-height:1.4;overflow-wrap:anywhere';
+      if (error || plainText) {
+        if (error) div.style.color = '#b91c1c';
+        div.textContent = String(text);
+      } else if (Array.isArray(verifiedLinks) && verifiedLinks.length) {
+        var body = document.createElement('div');
+        body.style.whiteSpace = 'pre-wrap';
+        body.appendChild(verifiedLinkedText(text, verifiedLinks));
+        div.appendChild(body);
+      } else {
+        div.appendChild(safeMarkup(text));
+      }
+      // A product-page link, not an automatic purchase or guessed cart URL.
+      if (!error && checkout && safeLink(checkout.url, false)) {
+        var go = document.createElement('a');
+        go.href = safeLink(checkout.url, false);
+        go.target = '_self';
+        go.rel = 'noopener noreferrer';
+        go.style.cssText = 'display:inline-block;margin-top:9px;padding:10px 12px;background:#111;color:white;border-radius:10px;text-decoration:none;font-weight:600';
+        go.textContent = 'Перейти до оформлення';
+        div.appendChild(go);
+      }
+      messagesContainer.appendChild(div);
+      scrollChat();
+    }
+    function loadChatHistory() {
+      var savedHtml = null;
+      try { savedHtml = localStorage.getItem(STORAGE_KEY_HTML); } catch (_) {}
+      messagesContainer.replaceChildren(
+        safeMarkup(savedHtml && savedHtml.trim() ? savedHtml : buildGreeting())
+      );
+      scrollChat();
+    }
+    function openChat() {
+      chatBox.style.display = 'flex';
+      if (promptBubble) promptBubble.style.display = 'none';
+      scrollChat();
+      inputField.focus();
+    }
+    function closeChat() { chatBox.style.display = 'none'; }
+    function openCallbackPanel() { callbackPanel.style.display = 'flex'; callbackPhoneInput.focus(); }
+    function closeCallbackPanel() { callbackPanel.style.display = 'none'; callbackPhoneInput.value = ''; }
+    function requestJson(url, payload) {
+      if (!API_BASE) return Promise.reject(new Error('Zorro AI backend URL is not configured'));
+      var controller = new AbortController();
+      var timer = setTimeout(function(){ controller.abort(); }, 65000);
+      var headers={'Content-Type':'application/json'};
+      // Only the owner manually supplies this staging-only secret after
+      // opening the protected test page. Never embed it in source or storage.
+      if (typeof window.ZORRO_AI_GET_ACCESS_TOKEN === 'function') {
+        var accessToken = window.ZORRO_AI_GET_ACCESS_TOKEN();
+        if (!accessToken) return Promise.reject(new Error('Staging access is locked'));
+        headers['X-Zorro-Staging-Token']=accessToken;
+      }
+      return fetch(url, {
+        method:'POST',headers:headers,
+        body:JSON.stringify(payload),signal:controller.signal
+      }).then(function(res){
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).finally(function(){ clearTimeout(timer); });
+    }
+    function sendTextMessage(text) {
+      text = String(text || '').trim().slice(0,2000);
+      if (!text || busy) return;
+      var priorHistory = chatTurns.slice(-12);
+      var qr = document.getElementById('ai-quick-replies');
+      if (qr) qr.style.display = 'none';
+      addUserText(text);
+      inputField.value = '';
+      saveChatState();
+      setBusy(true);
+      requestJson(API_BASE + '/api/chat', {
+        message:text,
+        current_product:pageProduct ? pageProduct.title : null,
+        history:priorHistory,
+        state:dialogueState
+      }).then(function(data){
+        if (!data || typeof data.reply !== 'string') throw new Error('Invalid API response');
+        if (data.state && typeof data.state === 'object' && !Array.isArray(data.state)) dialogueState = data.state;
+        chatTurns.push({role:'user', content:text});
+        chatTurns.push({role:'assistant', content:data.reply.replace(/<[^>]*>/g, ' ').replace(/\s+/g,' ').slice(0,700)});
+        chatTurns = chatTurns.slice(-12);
+        addBotText(data.reply, false, false, data.product_links, data.checkout);
+        saveChatState();
+      }).catch(function(error){
+        addBotText('Зараз немає зв’язку з консультантом. Спробуйте ще раз.', true);
+        console.warn('Zorro AI v4', error);
+      }).finally(function(){ setBusy(false); inputField.focus(); });
+    }
+    messagesContainer.addEventListener('click', function(e){
+      var btn=e.target.closest('.ai-chip,.ai-card-action');
+      if (!btn || busy) return;
+      if (btn.getAttribute('data-action') === 'call-modal') return openCallbackPanel();
+      if (btn.classList.contains('ai-chip')) return sendTextMessage(btn.getAttribute('data-msg'));
+      var action=btn.getAttribute('data-action'), name=btn.getAttribute('data-name');
+      if (!name) return;
+      if (action === 'similar') sendTextMessage('Покажи схожі моделі до ' + name);
+      else if (action === 'desc') sendTextMessage('Розкажи детальніше характеристики та опис ' + name);
+    });
+    callbackCancelBtn.addEventListener('click', closeCallbackPanel);
+    callbackSubmitBtn.addEventListener('click', function(){
+      var phone = callbackPhoneInput.value.replace(/[\s()\-]/g, '').trim();
+      if (!/^(?:\+?380\d{9}|0\d{9})$/.test(phone)) {
+        alert('Введіть, будь ласка, коректний український номер телефону.');return;
+      }
+      callbackSubmitBtn.disabled=true;
+      var context=pageProduct ? 'Переглядає товар: ' + pageProduct.title : 'Замовлення консультації з чату';
+      requestJson(API_BASE + '/api/callback',{phone:phone,message:context}).then(function(data){
+        addBotText(data && data.reply ? data.reply : 'Не вдалося відправити заявку.',
+                   !(data && data.status === 'success'), true);
+        if (data && data.status==='success') closeCallbackPanel();
+      }).catch(function(){ addBotText('Помилка надсилання заявки. Спробуйте пізніше.',true); })
+      .finally(function(){ callbackSubmitBtn.disabled=false; saveChatState(); });
+    });
+    toggleBtn.addEventListener('click',function(){
+      if(chatBox.style.display==='flex')closeChat();else openChat();
+    });
+    closeBtn.addEventListener('click',closeChat);
+    resetBtn.addEventListener('click',function(){
+      if (busy || !confirm('Очистити історію діалогу?')) return;
+      dialogueState={filters:{},product_ids:[]};chatTurns=[];
+      try {localStorage.removeItem(STORAGE_KEY_HTML);localStorage.removeItem(STORAGE_KEY_STATE);localStorage.removeItem(STORAGE_KEY_TURNS);}catch(_){}
+      messagesContainer.replaceChildren(safeMarkup(buildGreeting()));saveChatState();
+    });
+    sendBtn.addEventListener('click', function(){sendTextMessage(inputField.value);});
+    inputField.addEventListener('keydown',function(e){
+      if(e.key==='Enter'){e.preventDefault();sendTextMessage(inputField.value);}
+    });
+    loadChatHistory();
+  })();
+</script>
+<style>
+@media (max-width: 600px) {
+  #ai-chat-widget {bottom:12px!important;right:12px!important}
+  #ai-chat-box {width:calc(100vw - 24px)!important;height:min(620px,calc(100dvh - 100px))!important}
+}
+</style>
