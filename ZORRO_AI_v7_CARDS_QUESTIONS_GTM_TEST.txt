@@ -1,0 +1,1529 @@
+
+
+<!-- ZORRO AI v7 CARDS + QUESTIONS + PRODUCT LINKS TEST; mobile repair v5 preserved; GTM PREVIEW ONLY; document.write support OFF -->
+
+<script>
+window.ZORRO_AI_API_BASE =
+  'https://fastapi-qie2.onrender.com';
+</script>
+
+<style>
+#zorro-chat-root {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  z-index: 999999;
+  font-family: Arial, sans-serif;
+  color: #222;
+}
+
+#zorro-chat-root * {
+  box-sizing: border-box;
+}
+
+#zorro-chat-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: #141414;
+  color: white;
+  border: 0;
+  border-radius: 30px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 5px 20px rgba(0,0,0,.22);
+}
+
+.zorro-ai-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  background: linear-gradient(
+    135deg, #7b2cbf, #a855f7
+  );
+  border-radius: 50%;
+  color: white;
+}
+
+#zorro-chat-window {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 65px;
+  width: 370px;
+  height: 570px;
+  max-height: 82vh;
+  background: white;
+  border: 1px solid #e5e5e5;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 35px rgba(0,0,0,.2);
+  flex-direction: column;
+}
+
+#zorro-chat-window.open {
+  display: flex;
+}
+
+.zorro-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 13px;
+  background: white;
+  border-bottom: 1px solid #eee;
+}
+
+.zorro-chat-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 15px;
+}
+
+.zorro-chat-subtitle {
+  font-size: 12px;
+  color: #888;
+  margin-top: 3px;
+}
+
+.zorro-chat-tools {
+  display: flex;
+  gap: 4px;
+}
+
+.zorro-chat-tools button {
+  border: 0;
+  background: transparent;
+  color: #777;
+  font-size: 19px;
+  cursor: pointer;
+  padding: 5px;
+}
+
+#zorro-chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 13px;
+  background: #f8f9fb;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  scrollbar-width: thin;
+}
+
+.zorro-chat-bubble {
+  max-width: 92%;
+  padding: 11px 13px;
+  border-radius: 13px;
+  font-size: 16px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.zorro-chat-bot {
+  align-self: flex-start;
+  background: white;
+  color: #222;
+  border: 1px solid #e8e8e8;
+}
+
+.zorro-chat-user {
+  align-self: flex-end;
+  background: #252525;
+  color: white;
+}
+
+.zorro-chat-error {
+  color: #b91c1c;
+}
+
+/* Verified product names are links in assistant text, not model-generated HTML. */
+.zorro-chat-inline-link {
+  color: #65249e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: bold;
+}
+.zorro-chat-checkout-link {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: #00a046;
+  color: white !important;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: bold;
+  border-radius: 7px;
+}
+
+.zorro-chat-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  width: 100%;
+}
+
+.zorro-chat-quick button {
+  background: white;
+  border: 1px solid #ddd;
+  color: #222;
+  border-radius: 17px;
+  padding: 8px 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.zorro-chat-quick button:hover {
+  border-color: #7b2cbf;
+}
+
+.zorro-chat-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.zorro-chat-card {
+  width: 100%;
+  padding: 11px;
+  background: white;
+  border: 1px solid #e6e6e6;
+  border-radius: 12px;
+}
+
+.zorro-chat-card-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.zorro-chat-card img {
+  width: 88px;
+  height: 94px;
+  object-fit: contain;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+
+.zorro-chat-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.zorro-chat-brand-name {
+  font-size: 12px;
+  font-weight: bold;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.zorro-chat-product-name {
+  display: block;
+  margin: 5px 0;
+  color: #222;
+  text-decoration: none;
+  font-size: 16px;
+  font-weight: bold;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.zorro-chat-price {
+  color: #111;
+  font-size: 18px;
+  font-weight: bold;
+  margin: 7px 0;
+}
+
+.zorro-chat-buy {
+  display: inline-block;
+  padding: 7px 14px;
+  background: #00a046;
+  color: white !important;
+  border-radius: 7px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.zorro-chat-specs {
+  border-top: 1px solid #eee;
+  margin-top: 9px;
+  padding-top: 8px;
+  color: #555;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.zorro-chat-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 9px;
+}
+
+.zorro-chat-card-actions button {
+  border: 0;
+  background: transparent;
+  color: #7b2cbf;
+  padding: 3px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Context-sensitive follow-up questions beneath each watch card. */
+.zorro-chat-questions {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #ededed;
+}
+.zorro-chat-questions-label {
+  color: #666;
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 9px;
+}
+.zorro-chat-questions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.zorro-chat-question {
+  display: inline-block;
+  color: #333;
+  background: #f7f7f9;
+  border: 1px solid #e6e6eb;
+  border-radius: 20px;
+  padding: 8px 11px;
+  max-width: 100%;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
+  cursor: pointer;
+}
+.zorro-chat-question:hover,
+.zorro-chat-question:focus-visible {
+  border-color: #7b2cbf;
+  background: #f7f0ff;
+}
+.zorro-chat-more-questions {
+  border: 0;
+  background: transparent;
+  color: #7b2cbf;
+  padding: 8px 0 0;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.zorro-chat-input-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 12px;
+  border-top: 1px solid #eee;
+  background: white;
+}
+
+#zorro-chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid #ddd;
+  border-radius: 22px;
+  outline: none;
+  font-size: 16px;
+}
+
+#zorro-chat-input:focus {
+  border-color: #7b2cbf;
+}
+
+#zorro-chat-send {
+  flex-shrink: 0;
+  width: 39px;
+  height: 39px;
+  border: 0;
+  border-radius: 50%;
+  background: #141414;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+#zorro-chat-send:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+
+#zorro-chat-loading {
+  display: none;
+  padding: 9px 14px;
+  background: white;
+  color: #777;
+  font-size: 12px;
+}
+
+#zorro-chat-callback {
+  display: none;
+  padding: 10px;
+  gap: 8px;
+  background: #f1f8f2;
+  border-bottom: 1px solid #ddd;
+}
+
+#zorro-chat-phone {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #ccc;
+  padding: 8px;
+  border-radius: 7px;
+}
+
+#zorro-chat-call-send {
+  border: 0;
+  border-radius: 7px;
+  background: #00a046;
+  color: white;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+@media (max-width: 480px) {
+  #zorro-chat-root {
+    bottom: 12px;
+    right: 12px;
+  }
+
+  #zorro-chat-window {
+    position: fixed;
+    left: 8px;
+    top: 8px;
+    right: auto;
+    bottom: auto;
+    width: calc(100% - 16px);
+    height: calc(100dvh - 16px);
+    max-height: none;
+    border-radius: 14px;
+  }
+
+  #zorro-chat-input,
+  #zorro-chat-phone {
+    font-size: 16px;
+  }
+
+  #zorro-chat-root.zorro-mobile-open #zorro-chat-toggle {
+    display: none;
+  }
+
+  #zorro-chat-messages {
+    overscroll-behavior: contain;
+    overflow-anchor: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .zorro-chat-card img {
+    width: 78px;
+    height: 84px;
+  }
+}
+</style>
+
+<!-- HTML ВІДЖЕТА -->
+
+<div id="zorro-chat-root">
+
+  <button id="zorro-chat-toggle" type="button">
+    <span class="zorro-ai-logo">✦</span>
+    Zorro AI
+  </button>
+
+  <div id="zorro-chat-window">
+
+    <div class="zorro-chat-header">
+
+      <div class="zorro-chat-brand">
+        <span class="zorro-ai-logo">✦</span>
+        <div>
+          <strong>Zorro AI</strong>
+          <div class="zorro-chat-subtitle">
+            Ваш консультант з годинників
+          </div>
+        </div>
+      </div>
+
+      <div class="zorro-chat-tools">
+
+        <button id="zorro-chat-call"
+                type="button"
+                title="Замовити дзвінок">
+          ☎
+        </button>
+
+        <button id="zorro-chat-reset"
+                type="button"
+                title="Очистити чат">
+          ↺
+        </button>
+
+        <button id="zorro-chat-close"
+                type="button"
+                title="Закрити чат">
+          ✕
+        </button>
+
+      </div>
+    </div>
+
+    <div id="zorro-chat-callback">
+
+      <input id="zorro-chat-phone"
+             type="tel"
+             placeholder="Ваш номер телефону">
+
+      <button id="zorro-chat-call-send"
+              type="button">
+        Замовити
+      </button>
+
+    </div>
+
+    <div id="zorro-chat-messages"></div>
+
+    <div id="zorro-chat-loading">
+      ✦ Підбираю годинники...
+    </div>
+
+    <div class="zorro-chat-input-area">
+
+      <input id="zorro-chat-input"
+             type="text"
+             maxlength="2000"
+             placeholder="Який годинник шукаєте?">
+
+      <button id="zorro-chat-send"
+              type="button"
+              aria-label="Надіслати">
+        ➤
+      </button>
+
+    </div>
+
+  </div>
+</div>
+
+<!-- JAVASCRIPT ДЛЯ GOOGLE TAG MANAGER (ES5) -->
+
+<script>
+(function () {
+  'use strict';
+
+  var API = String(
+    window.ZORRO_AI_API_BASE || ''
+  ).replace(/\/+$/, '');
+
+  var root = document.getElementById('zorro-chat-root');
+
+  if (!root) return;
+
+  if (root.getAttribute('data-initialized') === '1') {
+    return;
+  }
+
+  root.setAttribute('data-initialized', '1');
+
+  var toggle = document.getElementById('zorro-chat-toggle');
+  var chatWindow = document.getElementById('zorro-chat-window');
+  var close = document.getElementById('zorro-chat-close');
+  var reset = document.getElementById('zorro-chat-reset');
+  var messages = document.getElementById('zorro-chat-messages');
+  var input = document.getElementById('zorro-chat-input');
+  var sendButton = document.getElementById('zorro-chat-send');
+  var loading = document.getElementById('zorro-chat-loading');
+
+  var callButton = document.getElementById('zorro-chat-call');
+  var callback = document.getElementById('zorro-chat-callback');
+  var phoneInput = document.getElementById('zorro-chat-phone');
+  var callSend = document.getElementById('zorro-chat-call-send');
+
+  var STORAGE_KEY = 'zorro_ai_real_chat';
+
+  var state = {
+    filters: {},
+    product_ids: []
+  };
+
+  var history = [];
+  var busy = false;
+  var currentProduct = null;
+
+  // Визначаємо товар, відкритий на сторінці.
+
+  var productArea = document.querySelector(
+    '.product-gallery, .product-detail-gallery'
+  );
+
+  if (productArea) {
+    var title = document.querySelector(
+      'h1.product-title, h1'
+    );
+
+    if (title) {
+      currentProduct = title.textContent.replace(
+        /^\s+|\s+$/g, ''
+      );
+    }
+  }
+
+  // СТВОРЕННЯ HTML-ЕЛЕМЕНТІВ
+
+  function create(tag, className, text) {
+    var node = document.createElement(tag);
+
+    if (className) {
+      node.className = className;
+    }
+
+    if (text !== undefined) {
+      node.textContent = String(text);
+    }
+
+    return node;
+  }
+
+  function scrollDown() {
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  // Розміщує початок нової відповіді біля верху області чату.
+  // Не прокручує всю сторінку магазину.
+  function showAnswerStart(bubble) {
+    function positionAnswer() {
+      if (!chatWindow.classList.contains('open') || !bubble) return;
+      var area = messages.getBoundingClientRect();
+      var item = bubble.getBoundingClientRect();
+      messages.scrollTop += item.top - area.top - 6;
+    }
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(function () {
+        positionAnswer();
+        window.requestAnimationFrame(positionAnswer);
+      });
+    } else {
+      positionAnswer();
+    }
+  }
+
+  function isMobileChat() {
+    return window.matchMedia ? window.matchMedia('(max-width: 480px)').matches : window.innerWidth <= 480;
+  }
+
+  // На мобільних Safari/Chrome клавіатура змінює visual viewport.
+  // Рахуємо координати від видимої області, а не від старого 78vh.
+  function sizeMobileChat() {
+    if (!isMobileChat()) {
+      chatWindow.style.top = '';
+      chatWindow.style.left = '';
+      chatWindow.style.width = '';
+      chatWindow.style.height = '';
+      return;
+    }
+    var viewport = window.visualViewport;
+    var top = viewport ? viewport.offsetTop : 0;
+    var left = viewport ? viewport.offsetLeft : 0;
+    var width = viewport ? viewport.width : window.innerWidth;
+    var height = viewport ? viewport.height : window.innerHeight;
+    var pad = 8;
+    chatWindow.style.top = Math.round(top + pad) + 'px';
+    chatWindow.style.left = Math.round(left + pad) + 'px';
+    chatWindow.style.width = Math.max(0, Math.floor(width - pad * 2)) + 'px';
+    chatWindow.style.height = Math.max(200, Math.floor(height - pad * 2)) + 'px';
+  }
+
+  function onViewportChange() {
+    if (chatWindow.classList.contains('open')) sizeMobileChat();
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onViewportChange);
+    window.visualViewport.addEventListener('scroll', onViewportChange);
+  }
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('orientationchange', onViewportChange);
+
+  // Accept only genuine HTTPS addresses from the Zorro catalog.
+  // No redirects to supplier sites or AI-invented addresses.
+  function safeZorroUrl(raw) {
+    var value = String(raw || '');
+    if (!/^https:\/\//i.test(value) || value.length > 2048 || /[\x00-\x20\x7f]/.test(value)) return '';
+    var check = document.createElement('a');
+    check.href = value;
+    if (check.protocol !== 'https:' ||
+        !/^(www\.)?zorro\.com\.ua$/i.test(check.hostname) ||
+        check.username || check.password ||
+        (check.port && check.port !== '443')) return '';
+    return check.href;
+  }
+
+  // Product cards from the existing API also contain catalog-verified URLs.
+  // This keeps text links working with older API responses during rollout.
+  function collectProductLinks(links, cards) {
+    var result = [];
+    var seen = {};
+    function include(entry) {
+      if (!entry || typeof entry.name !== 'string' || !safeZorroUrl(entry.url)) return;
+      var key = entry.name.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      result.push({name: entry.name, url: entry.url});
+    }
+    if (Array.isArray(links)) links.forEach(include);
+    if (Array.isArray(cards)) cards.forEach(include);
+    return result.slice(0, 20);
+  }
+
+  // Use verified catalog links from the current turn AND earlier card responses.
+  // Helpful when the user asks to describe or compare a previously shown model.
+  function knownProductLinks(links, cards) {
+    var collected = collectProductLinks(links, cards);
+    var index;
+    for (index = history.length - 1; index >= 0; index--) {
+      var turn = history[index];
+      var more = collectProductLinks(turn.product_links, turn.products);
+      var i;
+      for (i = 0; i < more.length && collected.length < 40; i++) {
+        var present = false;
+        var j;
+        for (j = 0; j < collected.length; j++) {
+          if (collected[j].name.toLowerCase() === more[i].name.toLowerCase()) {
+            present = true;
+            break;
+          }
+        }
+        if (!present) collected.push(more[i]);
+      }
+    }
+    return collected;
+  }
+
+  // Build DOM text nodes and anchors. NEVER set innerHTML from Gemini text.
+  function linkedProductText(raw, links) {
+    var value = String(raw || '');
+    var approved = [];
+    if (Array.isArray(links)) {
+      links.forEach(function (entry) {
+        if (!entry || typeof entry.name !== 'string' ||
+            entry.name.length < 5 || entry.name.length > 180) return;
+        var url = safeZorroUrl(entry.url);
+        if (!url) return;
+        approved.push({name: entry.name, lower: entry.name.toLowerCase(), url: url});
+      });
+    }
+    approved.sort(function (a, b) { return b.name.length - a.name.length; });
+    approved = approved.slice(0, 15);
+    var frag = document.createDocumentFragment();
+    var lower = value.toLowerCase();
+    var cursor = 0;
+    var parts = 0;
+    while (cursor < value.length && parts < 100) {
+      var winner = null;
+      var where = value.length;
+      approved.forEach(function (entry) {
+        var index = lower.indexOf(entry.lower, cursor);
+        if (index !== -1 && index < where) {
+          winner = entry;
+          where = index;
+        }
+      });
+      if (!winner) break;
+      if (where > cursor) frag.appendChild(document.createTextNode(value.slice(cursor, where)));
+      var a = create('a', 'zorro-chat-inline-link', value.slice(where, where + winner.name.length));
+      a.href = winner.url;
+      a.target = '_self';
+      a.rel = 'noopener noreferrer';
+      frag.appendChild(a);
+      cursor = where + winner.name.length;
+      parts++;
+    }
+    if (cursor < value.length) frag.appendChild(document.createTextNode(value.slice(cursor)));
+    return frag;
+  }
+
+  function addBubble(text, user, error, productLinks, checkout) {
+    var className = 'zorro-chat-bubble ';
+
+    if (user) {
+      className += 'zorro-chat-user';
+    } else {
+      className += 'zorro-chat-bot';
+    }
+
+    if (error) {
+      className += ' zorro-chat-error';
+    }
+
+    // Keep previous text-only rendering when no link metadata is supplied.
+    var bubble = create('div', className);
+    if (!user && !error && Array.isArray(productLinks) && productLinks.length) {
+      bubble.appendChild(linkedProductText(text, productLinks));
+    } else {
+      bubble.textContent = String(text);
+    }
+
+    // A direct visit to the verified product page. Not an API order or a cart mutation.
+    if (!user && !error && checkout && safeZorroUrl(checkout.url)) {
+      bubble.appendChild(document.createTextNode('\n'));
+      var checkoutButton = create('a', 'zorro-chat-checkout-link', 'Перейти до товару');
+      checkoutButton.href = safeZorroUrl(checkout.url);
+      checkoutButton.target = '_self';
+      checkoutButton.rel = 'noopener noreferrer';
+      bubble.appendChild(checkoutButton);
+    }
+
+    messages.appendChild(bubble);
+    if (user) scrollDown();
+    return bubble;
+  }
+
+  // ЗБЕРЕЖЕННЯ ІСТОРІЇ
+
+  function saveChat() {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: state,
+          history: history.slice(-12)
+        })
+      );
+    } catch (err) {
+      // Чат працює і без localStorage.
+    }
+  }
+
+  // Questions are derived from actual documented attribute labels; no claims
+  // about product quality, water suitability, or warranty are assumed.
+  function makeWatchQuestions(product) {
+    var attributes = Array.isArray(product.attributes) ? product.attributes : [];
+    var names = attributes.map(function (item) {
+      return String(item && item.name || '').toLowerCase();
+    }).join(' ');
+    var items = [];
+    function add(label, text) {
+      var i;
+      for (i = 0; i < items.length; i++) if (items[i].label === label) return;
+      items.push({label: label, text: text});
+    }
+    var n = String(product.name || 'цього годинника');
+    if (/вод|water|атм|atm|^ip\d/.test(names))
+      add('Який захист від води?', 'Який підтверджений захист від води у ' + n + '? Чи можна його мочити?');
+    if (/розмір|діаметр|габарит|товщин|вага/.test(names))
+      add('Який розмір?', 'Які розміри і вага годинника ' + n + ' за характеристиками?');
+    if (/ремін|браслет|матеріал/.test(names))
+      add('Який ремінець?', 'Який матеріал ремінця годинника ' + n + '?');
+    if (/заряд|батаре|акумул|автоном/.test(names))
+      add('Як довго працює?', 'Яка підтверджена автономність годинника ' + n + '?');
+    if (/дзвін|розмов|bluetooth|sim|сім/.test(names))
+      add('Чи можна телефонувати?', 'Чи підтримує годинник ' + n + ' телефонні дзвінки?');
+    if (/механізм|кварц/.test(names))
+      add('Який механізм?', 'Який механізм у годинника ' + n + '?');
+    if (/скло/.test(names))
+      add('Яке скло?', 'Яке скло у годинника ' + n + '?');
+    add('У чому переваги?', 'Які переваги годинника ' + n + ' можна підтвердити його характеристиками?');
+    add('Кому підійде?', 'Для кого або яких ситуацій підійде годинник ' + n + ' з огляду на підтверджені характеристики?');
+    add('З чим порівняти?', 'З якими схожими доступними моделями можна порівняти ' + n + '?');
+    return items.slice(0, 6);
+  }
+
+  function addCardQuestions(product, card) {
+    var all = makeWatchQuestions(product);    if (!all.length) return;
+    var section = create('div', 'zorro-chat-questions');
+    var title = create('div', 'zorro-chat-questions-label', 'Запитайте про цю модель');
+    var list = create('div', 'zorro-chat-questions-list');
+    section.appendChild(title);
+    section.appendChild(list);
+    function appendQuestion(question) {
+      var button = create('button', 'zorro-chat-question', question.label);
+      button.type = 'button';
+      button.title = 'Запитати про ' + String(product.name || 'цей годинник');
+      button.addEventListener('click', function () { sendMessage(question.text); });
+      list.appendChild(button);
+    }
+    all.slice(0, 3).forEach(appendQuestion);
+    if (all.length > 3) {
+      var more = create('button', 'zorro-chat-more-questions', 'Ще запитання +');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        all.slice(3).forEach(appendQuestion);
+        more.parentNode.removeChild(more);
+      });
+      section.appendChild(more);
+    }
+    card.appendChild(section);
+  }
+
+  // КАРТКА ТОВАРУ
+
+  function addProductCard(product, container) {
+    var card = create('div', 'zorro-chat-card');
+    var main = create('div', 'zorro-chat-card-main');
+
+    if (product.image) {
+      var image = create('img');
+
+      image.src = String(product.image);
+      image.alt = product.name || 'Годинник';
+      image.loading = 'lazy';
+
+      main.appendChild(image);
+    }
+
+    var info = create('div', 'zorro-chat-info');
+
+    var brand = create(
+      'div',
+      'zorro-chat-brand-name',
+      product.brand || 'Zorro'
+    );
+
+    info.appendChild(brand);
+
+    var name = create(
+      'a',
+      'zorro-chat-product-name',
+      product.name || 'Годинник'
+    );
+
+    var verifiedUrl = safeZorroUrl(product.url);
+    if (verifiedUrl) {
+      name.href = verifiedUrl;
+    } else {
+      name.removeAttribute('href');
+    }
+    info.appendChild(name);
+
+    var amount = Number(
+      product.price || 0
+    ).toLocaleString('uk-UA') + ' ₴';
+
+    var price = create(
+      'div',
+      'zorro-chat-price',
+      amount
+    );
+
+    info.appendChild(price);
+
+    var buy = create(
+      'a',
+      'zorro-chat-buy',
+      'Купити'
+    );
+
+    if (verifiedUrl) {
+      buy.href = verifiedUrl;
+      buy.rel = 'noopener noreferrer';
+      info.appendChild(buy);
+    }
+    main.appendChild(info);
+    card.appendChild(main);
+
+    // Характеристики товару
+
+    if (
+      Array.isArray(product.attributes) &&
+      product.attributes.length
+    ) {
+      var specs = create(
+        'div',
+        'zorro-chat-specs'
+      );
+
+      product.attributes.slice(0, 3).forEach(
+        function (item) {
+          if (item && item.name && item.value) {
+            var specification = create(
+              'div',
+              '',
+              item.name + ': ' + item.value
+            );
+
+            specs.appendChild(specification);
+          }
+        }
+      );
+
+      card.appendChild(specs);
+    }
+
+    // Кнопки товару
+
+    var actions = create(
+      'div',
+      'zorro-chat-card-actions'
+    );
+
+    var describe = create(
+      'button',
+      '',
+      '📄 Опис товару'
+    );
+
+    describe.type = 'button';
+
+    describe.addEventListener(
+      'click',
+      function () {
+        sendMessage(
+          'Розкажи детальніше характеристики та опис ' +
+          product.name
+        );
+      }
+    );
+
+    var similar = create(
+      'button',
+      '',
+      '🔍 Схожі'
+    );
+
+    similar.type = 'button';
+
+    similar.addEventListener(
+      'click',
+      function () {
+        sendMessage(
+          'Новий пошук: покажи схожі годинники до ' +
+          product.name
+        );
+      }
+    );
+
+    actions.appendChild(describe);
+    actions.appendChild(similar);
+
+    card.appendChild(actions);
+    addCardQuestions(product, card);
+    container.appendChild(card);
+  }
+
+  // ПОКАЗ КАРТОК
+
+  function addProducts(products) {
+    if (!Array.isArray(products)) return;
+    if (!products.length) return;
+
+    var list = create(
+      'div',
+      'zorro-chat-cards'
+    );
+
+    products.forEach(function (product) {
+      addProductCard(product, list);
+    });
+
+    messages.appendChild(list);
+
+    // Кнопка порівняння
+
+    if (products.length > 1) {
+      var quick = create(
+        'div',
+        'zorro-chat-quick'
+      );
+
+      var compare = create(
+        'button',
+        '',
+        '⚖️ Порівняй ці моделі'
+      );
+
+      compare.type = 'button';
+
+      compare.addEventListener(
+        'click',
+        function () {
+          sendMessage(
+            'Порівняй ці моделі між собою'
+          );
+        }
+      );
+
+      quick.appendChild(compare);
+      messages.appendChild(quick);
+    }
+
+    // Прокруткою керує повідомлення відповіді, а не картки товарів.
+  }
+
+  // ВІТАЛЬНЕ ПОВІДОМЛЕННЯ
+
+  function showWelcome() {
+    addBubble(
+      'Привіт! Я Zorro AI — консультант магазину годинників. ' +
+      'Допоможу підібрати модель, порівняти характеристики ' +
+      'та знайти годинник за вашим бюджетом.',
+      false
+    );
+
+    if (currentProduct) {
+      addBubble(
+        'Зараз ви переглядаєте: ' +
+        currentProduct +
+        '. Можете запитати мене про цей годинник.',
+        false
+      );
+    }
+
+    var quick = create(
+      'div',
+      'zorro-chat-quick'
+    );
+
+    var suggestions = [
+      'Чоловічі годинники до 2000 грн',
+      'Жіночі годинники',
+      'Смартгодинники з дзвінками',
+      'Дитячі годинники'
+    ];
+
+    suggestions.forEach(function (text) {
+      var button = create(
+        'button',
+        '',
+        text
+      );
+
+      button.type = 'button';
+
+      button.addEventListener(
+        'click',
+        function () {
+          sendMessage(text);
+        }
+      );
+
+      quick.appendChild(button);
+    });
+
+    messages.appendChild(quick);
+  }
+
+  // ВІДНОВЛЕННЯ ІСТОРІЇ
+
+  function restoreChat() {
+    while (messages.firstChild) {
+      messages.removeChild(messages.firstChild);
+    }
+
+    if (!history.length) {
+      showWelcome();
+      return;
+    }
+
+    history.forEach(function (turn) {
+      addBubble(
+        turn.content,
+        turn.role === 'user',
+        false,
+        knownProductLinks(turn.product_links, turn.products),
+        turn.checkout
+      );
+
+      if (
+        turn.role === 'assistant' &&
+        Array.isArray(turn.products)
+      ) {
+        addProducts(turn.products);
+      }
+    });
+  }
+
+  try {
+    var saved = JSON.parse(
+      localStorage.getItem(STORAGE_KEY) || '{}'
+    );
+
+    if (
+      saved &&
+      typeof saved === 'object'
+    ) {
+      if (
+        saved.state &&
+        typeof saved.state === 'object'
+      ) {
+        state = saved.state;
+      }
+
+      if (Array.isArray(saved.history)) {
+        history = saved.history.slice(-12);
+      }
+    }
+
+  } catch (err) {
+    history = [];
+  }
+
+  // ЗАПИТ ДО PYTHON-СЕРВЕРА
+  // Сумісний з GTM: XMLHttpRequest замість async/await
+
+  function request(path, payload, done) {
+    if (!/^https:\/\//i.test(API)) {
+      done(new Error('Вкажіть адресу Render'));
+      return;
+    }
+
+    var xhr = new XMLHttpRequest();
+    var completed = false;
+
+    function finish(error, result) {
+      if (completed) return;
+
+      completed = true;
+      done(error, result);
+    }
+
+    xhr.open('POST', API + path, true);
+    xhr.timeout = 55000;
+
+    xhr.setRequestHeader(
+      'Content-Type',
+      'application/json'
+    );
+
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+
+      if (
+        xhr.status < 200 ||
+        xhr.status >= 300
+      ) {
+        finish(
+          new Error('HTTP ' + xhr.status)
+        );
+        return;
+      }
+
+      try {
+        var data = JSON.parse(
+          xhr.responseText
+        );
+
+        finish(null, data);
+
+      } catch (err) {
+        finish(err);
+      }
+    };
+
+    xhr.onerror = function () {
+      finish(new Error('Помилка мережі'));
+    };
+
+    xhr.ontimeout = function () {
+      finish(
+        new Error('Час очікування вичерпано')
+      );
+    };
+
+    try {
+      xhr.send(
+        JSON.stringify(payload)
+      );
+
+    } catch (err) {
+      finish(err);
+    }
+  }
+
+  // СТАН ЗАВАНТАЖЕННЯ
+
+  function setBusy(value) {
+    busy = value;
+
+    sendButton.disabled = value;
+    input.disabled = value;
+
+    if (value) {
+      loading.style.display = 'block';
+    } else {
+      loading.style.display = 'none';
+    }
+  }
+
+  // НАДСИЛАННЯ ПОВІДОМЛЕННЯ
+
+  function sendMessage(value) {
+    var text = String(
+      value !== undefined ? value : input.value
+    ).replace(/^\s+|\s+$/g, '');
+
+    if (!text || busy) return;
+
+    text = text.slice(0, 2000);
+
+    // Попередню історію відправляємо до
+    // додавання нового повідомлення.
+
+    var previousHistory = history.slice(-12).map(
+      function (turn) {
+        return {
+          role: turn.role,
+          content: turn.content
+        };
+      }
+    );
+
+    setBusy(true);
+
+    var quicks = messages.querySelectorAll(
+      '.zorro-chat-quick'
+    );
+
+    for (var i = 0; i < quicks.length; i++) {
+      quicks[i].style.display = 'none';
+    }
+
+    addBubble(text, true);
+    input.value = '';
+    if (isMobileChat() && document.activeElement === input) input.blur();
+
+    request(
+      '/api/chat',
+      {
+        message: text,
+        history: previousHistory,
+        state: state,
+        current_product: currentProduct
+      },
+      function (error, data) {
+
+        if (
+          error ||
+          !data ||
+          typeof data.reply !== 'string'
+        ) {
+          console.warn(
+            'Zorro AI:',
+            error || 'Неправильна відповідь'
+          );
+
+          var errorBubble = addBubble(
+            'Не вдалося з’єднатися з консультантом. ' +
+            'Перевірте Render або спробуйте ще раз.',
+            false,
+            true
+          );
+          showAnswerStart(errorBubble);
+
+        } else {
+
+          var answerBubble = addBubble(
+            data.reply,
+            false,
+            false,
+            knownProductLinks(data.product_links, data.products),
+            data.checkout
+          );
+
+          if (Array.isArray(data.products)) {
+            addProducts(data.products);
+          }
+
+          if (
+            data.state &&
+            typeof data.state === 'object'
+          ) {
+            state = data.state;
+          }
+
+          history.push({
+            role: 'user',
+            content: text
+          });
+
+          history.push({
+            role: 'assistant',
+            content: data.reply,
+            products: data.products || [],
+            product_links: knownProductLinks(data.product_links, data.products),
+            checkout: data.checkout || null
+          });
+
+          history = history.slice(-12);
+
+          saveChat();
+          showAnswerStart(answerBubble);
+        }
+
+        setBusy(false);
+        // Не фокусуємо поле: на телефоні це повторно відкриває клавіатуру.
+        onViewportChange();
+      }
+    );
+  }
+
+  // КНОПКА ВІДКРИТТЯ ЧАТУ
+
+  toggle.addEventListener(
+    'click',
+    function () {
+      var opening = !chatWindow.classList.contains('open');
+      if (opening) {
+        chatWindow.classList.add('open');
+        if (isMobileChat()) root.classList.add('zorro-mobile-open');
+        sizeMobileChat();
+        scrollDown();
+      } else {
+        if (document.activeElement === input) input.blur();
+        chatWindow.classList.remove('open');
+        root.classList.remove('zorro-mobile-open');
+      }
+    }
+  );
+
+  // ЗАКРИТИ ЧАТ
+
+  close.addEventListener(
+    'click',
+    function () {
+      if (document.activeElement === input) input.blur();
+      if (document.activeElement === phoneInput) phoneInput.blur();
+      chatWindow.classList.remove('open');
+      root.classList.remove('zorro-mobile-open');
+    }
+  );
+
+  // ОЧИСТИТИ ІСТОРІЮ
+
+  reset.addEventListener(
+    'click',
+    function () {
+      if (busy) return;
+
+      if (!confirm('Очистити історію розмови?')) {
+        return;
+      }
+
+      history = [];
+
+      state = {
+        filters: {},
+        product_ids: []
+      };
+
+      saveChat();
+      restoreChat();
+    }
+  );
+
+  // НАДІСЛАТИ КНОПКОЮ
+
+  sendButton.addEventListener(
+    'click',
+    function () {
+      sendMessage();
+    }
+  );
+
+  // НАДІСЛАТИ КЛАВІШЕЮ ENTER
+
+  input.addEventListener(
+    'keydown',
+    function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        sendMessage();
+      }
+    }
+  );
+
+  // ЗВОРОТНИЙ ДЗВІНОК
+
+  callButton.addEventListener(
+    'click',
+    function () {
+      if (callback.style.display === 'flex') {
+        callback.style.display = 'none';
+      } else {
+        callback.style.display = 'flex';
+      }
+    }
+  );
+
+  callSend.addEventListener(
+    'click',
+    function () {
+      var phone = phoneInput.value.replace(
+        /^\s+|\s+$/g,
+        ''
+      );
+
+      if (!phone) {
+        addBubble(
+          'Введіть номер телефону.',
+          false,
+          true
+        );
+        return;
+      }
+
+      if (busy) return;
+
+      setBusy(true);
+      callSend.disabled = true;
+
+      request(
+        '/api/callback',
+        {
+          phone: phone,
+          message: 'Заявка з Zorro AI'
+        },
+        function (error, result) {
+
+          if (error || !result) {
+            addBubble(
+              'Не вдалося надіслати заявку.',
+              false,
+              true
+            );
+
+          } else {
+
+            addBubble(
+              result.reply ||
+              'Не вдалося надіслати заявку.',
+              false,
+              result.status !== 'success'
+            );
+
+            if (result.status === 'success') {
+              phoneInput.value = '';
+              callback.style.display = 'none';
+            }
+          }
+
+          callSend.disabled = false;
+          setBusy(false);
+        }
+      );
+    }
+  );
+
+  // ПЕРШИЙ ЗАПУСК ВІДЖЕТА
+
+  restoreChat();
+
+})();
+</script>
