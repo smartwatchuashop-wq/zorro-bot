@@ -13,10 +13,14 @@ from typing import Any
 
 from buyer_profile import clean_profile, merge_profile, retrieval_context
 from evidence_v7 import eligible, full_facts, rank_candidates, choose_ids
+from sales_actions import (
+    explicit_checkout_intent, trusted_product_url, resolve_checkout_product,
+    verified_product_links,
+)
 
 LOG = logging.getLogger('zorro.consultation')
 from quality_telemetry import add as measure
-ALLOWED = {'search', 'compare', 'recommend', 'describe', 'store_info', 'clarify'}
+ALLOWED = {'search', 'compare', 'recommend', 'describe', 'store_info', 'clarify', 'checkout'}
 
 
 def planning_tools():
@@ -68,7 +72,10 @@ PLANNER = (
     'For explicit required feature, use must. For an optional wish, prefer. '
     'Represent an occasion such as hiking or gift in goal, not as a falsely verified feature. '
     'New unrelated shopping intent => mode new, reset old context. Otherwise refine. '
-    'Use store_info for delivery/returns/payment questions, not hallucinated store policies. '
+    'Use store_info ONLY for delivery/returns/payment/policy questions, not hallucinated store policies. '
+    'When the customer wants to place an order or buy a model, use checkout, NOT store_info. '
+    'A checkout action guides the customer to the official Zorro product page; it never places an order. '
+    'If multiple previously shown models exist, specify the requested ID/position only when unambiguous. '
     'If buyer explicitly requests other models in addition to comparing, actions compare+search. '
     'Respect price/budget, gender/category, brand, negative requirements. '
     'For objective verifiable mandatory feature use must, for subjective goals like sturdy or beautiful use prefer or goal. '
@@ -205,7 +212,8 @@ def run(data) -> dict:
     state = {'filters': current.get('filters') if isinstance(current.get('filters'),dict) else {},
              'product_ids': [str(x)[:64] for x in current.get('product_ids', [])[:5]] if isinstance(current.get('product_ids'),list) else [],
              'search_intent': str(current.get('search_intent') or '')[:350],
-             'buyer_profile': clean_profile(current.get('buyer_profile'))}
+             'buyer_profile': clean_profile(current.get('buyer_profile')),
+             'selected_product_id': str(current.get('selected_product_id') or '')[:64]}
     message = data.message.strip()[:2000]
     history = [{'role': m.role, 'content': re.sub(r'<[^>]*>', ' ', m.content)[:450]}
                for m in data.history[-10:] if m.role in ('user','assistant')]
@@ -216,6 +224,10 @@ def run(data) -> dict:
         LOG.warning('Planner unavailable: %s',type(ex).__name__)
         measure('planner_fallbacks')
         plan = _validated_plan(_fallback_plan(message, shown))
+    # A direct purchase command must not be misclassified as a store-policy question.
+    if explicit_checkout_intent(message):
+        plan['actions'] = ['checkout']
+        plan['mode'] = 'refine'
     actions = plan['actions']
     if plan['mode'] == 'new' and not ('search' in actions or not shown):
         # A mistaken 'new' action may not discard the reference set under comparison.
@@ -225,6 +237,7 @@ def run(data) -> dict:
         state['search_intent'] = ''
         shown = []
         state['product_ids'] = []
+        state['selected_product_id'] = ''
     delta = dict(plan['filters_delta'])
     delta['mode'] = plan['mode']
     filters = main.merge_filter_state(state['filters'],delta,message)
@@ -244,6 +257,42 @@ def run(data) -> dict:
                 new_topic=(plan['mode']=='new'),
                 previously_shown=[str(p['site_id']) for p in shown])
 
+    if 'checkout' in actions:
+        # Product selection is made only from previously verified catalog rows.
+        chosen = resolve_checkout_product(shown, plan, message, history)
+        if not chosen and state['selected_product_id']:
+            chosen = next((p for p in shown if str(p['site_id']) ==
+                           state['selected_product_id']), None)
+        if not chosen and data.current_product:
+            opened = main.find_current_product(data.current_product)
+            if opened and (not shown or any(str(p['site_id']) ==
+                                            str(opened['site_id']) for p in shown)):
+                chosen = opened
+        if not chosen:
+            if shown:
+                options = '; '.join('%d — %s' % (i + 1, p['name'])
+                                    for i, p in enumerate(shown[:3]))
+                reply = 'Допоможу з оформленням. Яку саме модель обрали: ' + options + '?'
+                return {'reply': reply, 'products': [], 'state': state,
+                        'product_links': verified_product_links(reply, shown)}
+            return {'reply': 'Із задоволенням допоможу оформити замовлення. '
+                             'Яку модель годинника ви хочете купити?',
+                    'products': [], 'state': state, 'product_links': []}
+        url = trusted_product_url(chosen.get('url'))
+        if not url:
+            return {'reply': 'Для цієї моделі поки не вдалося перевірити посилання '
+                             'на сторінку покупки. Можете звернутися до менеджера '
+                             'через кнопку телефону в чаті.',
+                    'products': [], 'state': state, 'product_links': []}
+        state['selected_product_id'] = str(chosen['site_id'])
+        reply = ('Для оформлення замовлення на «%s» перейдіть на сторінку товару '
+                 'та додайте його до кошика. Я не оформлюю покупку замість вас, '
+                 'але можу допомогти з вибором або запропонувати зв’язок із менеджером.'
+                 ) % chosen['name']
+        return {'reply': reply, 'products': [], 'state': state,
+                'product_links': verified_product_links(reply, [chosen]),
+                'checkout': {'product_id': str(chosen['site_id']), 'url': url}}
+
     if 'store_info' in actions:
         return {'reply':'Умови доставки, оплати, гарантії та повернення потрібно звіряти з актуальними сторінками Zorro. Не називатиму непідтверджених умов.',
                 'products':[], 'state':state}
@@ -261,7 +310,8 @@ def run(data) -> dict:
             measure('clarifications')
             listed = '; '.join('%d — %s' % (i+1,p['name']) for i,p in enumerate(shown))
             return {'reply':'Ви згадали дві моделі, але раніше ми розглядали три. Які саме дві порівняти? '+listed,
-                    'products':[],'state':state}
+                    'products':[],'state':state,
+                    'product_links':verified_product_links('Ви згадали дві моделі, але раніше ми розглядали три. Які саме дві порівняти? '+listed,shown)}
         if not referenced and 'describe' in previous_actions and data.current_product:
             p = main.find_current_product(data.current_product)
             referenced = [p] if p else []
@@ -312,4 +362,7 @@ def run(data) -> dict:
     reply = '\n\n'.join(p for p in response_parts if p)
     if not reply:
         reply = plan['clarification'] or 'Уточніть, будь ласка, що саме хочете знайти або порівняти.'
-    return {'reply':reply[:1400], 'products':[main.render_product(p) for p in shown_new], 'state':state}
+    reply = reply[:1400]
+    return {'reply': reply, 'products': [main.render_product(p) for p in shown_new],
+            'state': state,
+            'product_links': verified_product_links(reply, shown_new + shown)}
